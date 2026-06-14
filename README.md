@@ -1,26 +1,18 @@
-# aurguard
+<h1 align="center">aurguard</h1>
 
-> **AUR package security guard — analyze before you install.**
+<p align="center"><strong>AUR package security guard — analyze before you install.</strong></p>
+
+<p align="center">
+  <img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue.svg">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Arch%20Linux-1793D1?logo=archlinux&logoColor=white">
+  <img alt="Built with Rust" src="https://img.shields.io/badge/built%20with-Rust-CE412B?logo=rust&logoColor=white">
+  <img alt="Languages" src="https://img.shields.io/badge/i18n-en%20·%20tr%20·%20fr%20·%20es%20·%20az-9558B2">
+  <a href="https://github.com/lunanoir21/aurguard-project/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/lunanoir21/aurguard-project/actions/workflows/ci.yml/badge.svg"></a>
+</p>
 
 `aurguard` is a small, fast CLI that sits between you and the [Arch User Repository](https://aur.archlinux.org/). Before any package touches `makepkg`, it fetches the package metadata and the raw `PKGBUILD`, runs a static security analysis, and shows you a clean report. You decide whether to install — with the risks in front of you.
 
 No API keys. No telemetry. No accounts. Just the public AUR RPC API and offline static analysis. The whole interface is available in **English, Türkçe, Français, Español, and Azərbaycan**.
-
-```
-  ┌─ aurguard — Security Report ───────────────────────────────┐
-  │                                                            │
-  │  Package      firefox 126.0-1                              │
-  │  Maintainer   heftig  (since 2009)                         │
-  │  Votes        2,847                                        │
-  │  Last update  2 days ago                                   │
-  │                                                            │
-  │  Sources      github.com ✓   releases.mozilla.org ✓        │
-  │  Findings     None detected                                │
-  │                                                            │
-  └────────────────────────────────────────────────────────────┘
-
-  Install firefox? [y/N]
-```
 
 ---
 
@@ -39,8 +31,8 @@ It does **not** replace reading the script yourself for anything sensitive. It r
 ### From source (recommended)
 
 ```sh
-git clone https://github.com/aurguard/aurguard.git
-cd aurguard
+git clone https://github.com/lunanoir21/aurguard-project.git
+cd aurguard-project
 ./install.sh
 ```
 
@@ -83,6 +75,10 @@ If these are missing, `aurguard` tells you clearly and exits:
 ---
 
 ## Usage
+
+<p align="center">
+  <img src="assets/demo.gif" alt="aurguard demo — analyzing AUR packages" width="820">
+</p>
 
 ```
 aurguard <package>...       Show the report (no flag = like -I); suggests

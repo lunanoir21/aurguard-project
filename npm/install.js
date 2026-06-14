@@ -16,7 +16,7 @@ const https = require("https");
 const { createGunzip } = require("zlib");
 const { execFileSync } = require("child_process");
 
-const REPO = "aurguard/aurguard";
+const REPO = "lunanoir21/aurguard-project";
 const VERSION = require("./package.json").version;
 
 const TARGETS = {

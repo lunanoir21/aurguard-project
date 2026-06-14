@@ -15,4 +15,4 @@ aurguard -S <package>   # analyze + install
 Linux only (the AUR is Arch-specific). Requires `git` and `makepkg` to install
 packages; analysis works without them.
 
-Full documentation: https://github.com/aurguard/aurguard
+Full documentation: https://github.com/lunanoir21/aurguard-project

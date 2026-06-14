@@ -23,13 +23,13 @@
     "pacman",
     "pkgbuild"
   ],
-  "homepage": "https://github.com/aurguard/aurguard#readme",
+  "homepage": "https://github.com/lunanoir21/aurguard-project#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aurguard/aurguard.git"
+    "url": "git+https://github.com/lunanoir21/aurguard-project.git"
   },
   "bugs": {
-    "url": "https://github.com/aurguard/aurguard/issues"
+    "url": "https://github.com/lunanoir21/aurguard-project/issues"
   },
   "license": "MIT",
   "files": [

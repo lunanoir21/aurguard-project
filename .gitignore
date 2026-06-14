@@ -1,9 +1,27 @@
+# Rust build output
 /target
-Cargo.lock
 **/*.rs.bk
 *.pdb
+
+# Cargo.lock IS committed — aurguard ships a binary, so a locked, reproducible
+# build is intended. (Do not ignore it.)
 
 # npm wrapper
 npm/node_modules/
 npm/bin/
 npm/package-lock.json
+
+# Editor / OS junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.code-workspace
+
+# Local env / secrets — never commit
+.env
+.env.*
+*.local
