@@ -85,8 +85,10 @@ If these are missing, `aurguard` tells you clearly and exits:
 ## Usage
 
 ```
-aurguard -S <package>...   Analyze and install AUR package(s)
-aurguard -I <package>...    Show the security report only (no install)
+aurguard <package>...       Show the report (no flag = like -I); suggests
+                            matches if there is no exact name
+aurguard -S <package>...    Analyze and install AUR package(s)
+aurguard -I <package>...     Show the security report only (no install)
 aurguard --file <PATH>      Analyze a local PKGBUILD (offline)
 aurguard --setup            Interactive setup wizard (language, policy, …)
 aurguard -Q                 List packages installed via aurguard

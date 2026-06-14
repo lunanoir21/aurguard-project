@@ -102,6 +102,13 @@ Status legend: ⬜ todo · 🔨 in progress · ✅ done
 - ✅ T13.7 Live: Türkçe panel, Azərbaycan wizard, fr/az finding messages
 - ✅ T13.8 74 tests green (62 unit + 12 integration), clippy/fmt clean
 
+## Phase 15 — UX polish
+- ✅ T15.1 Long finding messages word-wrap (no truncation), borders aligned
+- ✅ T15.2 Spinner messages localized (Fetching/Cloning) — matches git locale
+- ✅ T15.3 Bare `aurguard <pkg>` = report (like -I) + search fallback
+- ✅ T15.4 npm wrapper: README added; `npm pack` clean; name available
+- ✅ T15.5 77 tests (65 unit + 12 integration) green; clippy/fmt clean
+
 ## Phase 14 — Release CI (npm + crates.io)
 - ✅ T14.1 `release.yml`: version synced from `v*` tag → Cargo.toml + package.json
 - ✅ T14.2 aarch64 build sets `CC_*` so tree-sitter-bash C cross-compiles

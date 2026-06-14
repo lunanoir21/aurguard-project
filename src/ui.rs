@@ -176,10 +176,18 @@ pub fn write_report<W: Write>(w: &mut W, report: &Report, opts: UiOptions) -> io
                 opts,
             );
             let loc = f.line.map(|l| format!(" (line {l})")).unwrap_or_default();
-            // Message + location is plain text; truncate to fit before coloring.
-            let text = truncate_visible(&format!("{}{}", f.message, loc), avail);
-            let body = format!("  {glyph}  {sev}{text}");
-            writeln!(w, "  │{}│", pad_visible_raw(&body))?;
+            // Word-wrap the (plain) message so long localized strings show in
+            // full across continuation lines instead of being truncated.
+            let chunks = wrap_text(&format!("{}{}", f.message, loc), avail);
+            for (i, chunk) in chunks.iter().enumerate() {
+                let body = if i == 0 {
+                    format!("  {glyph}  {sev}{chunk}")
+                } else {
+                    // Indent continuation lines under the message column.
+                    format!("{}{chunk}", " ".repeat(PREFIX))
+                };
+                writeln!(w, "  │{}│", pad_visible_raw(&body))?;
+            }
         }
     }
 
@@ -445,6 +453,45 @@ fn truncate_visible(s: &str, max: usize) -> String {
     format!("{kept}…")
 }
 
+/// Word-wrap a plain string into lines of at most `width` characters. Words
+/// longer than `width` are hard-split. Never returns an empty vector.
+fn wrap_text(s: &str, width: usize) -> Vec<String> {
+    let width = width.max(1);
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in s.split_whitespace() {
+        // Hard-split a word that cannot fit on its own line.
+        if word.chars().count() > width {
+            if !current.is_empty() {
+                lines.push(std::mem::take(&mut current));
+            }
+            let mut chunk = String::new();
+            for ch in word.chars() {
+                if chunk.chars().count() == width {
+                    lines.push(std::mem::take(&mut chunk));
+                }
+                chunk.push(ch);
+            }
+            current = chunk;
+            continue;
+        }
+        let extra = if current.is_empty() { 0 } else { 1 };
+        if current.chars().count() + extra + word.chars().count() > width {
+            lines.push(std::mem::take(&mut current));
+            current.push_str(word);
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() || lines.is_empty() {
+        lines.push(current);
+    }
+    lines
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -481,6 +528,49 @@ mod tests {
         let colored = "\u{1b}[31m✖\u{1b}[0m";
         assert_eq!(visible_len(colored), 1);
         assert_eq!(visible_len("abc"), 3);
+    }
+
+    #[test]
+    fn wrap_text_basic() {
+        assert_eq!(wrap_text("short", 20), vec!["short"]);
+        let w = wrap_text("one two three four five", 9);
+        assert!(w.iter().all(|l| l.chars().count() <= 9));
+        assert_eq!(w.join(" "), "one two three four five");
+    }
+
+    #[test]
+    fn wrap_text_hard_splits_long_word() {
+        let w = wrap_text("supercalifragilistic", 5);
+        assert!(w.iter().all(|l| l.chars().count() <= 5));
+        assert_eq!(w.concat(), "supercalifragilistic");
+    }
+
+    #[test]
+    fn long_finding_message_wraps_not_truncates() {
+        let opts = UiOptions {
+            color: false,
+            lang: Lang::En,
+        };
+        let long =
+            "Package ships an install scriptlet that runs as root on install and warrants review";
+        let report = sample(
+            vec![Finding::meta(Severity::Warn, "INSTALL_HOOK", long)],
+            vec![],
+        );
+        let mut buf = Vec::new();
+        write_report(&mut buf, &report, opts).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        // No ellipsis truncation, and the trailing word survives.
+        assert!(!s.contains('…'));
+        assert!(s.contains("review"));
+        // Every interior line still closes the border at the same column.
+        for line in s.lines().filter(|l| l.starts_with("  │")) {
+            assert_eq!(
+                line.chars().count(),
+                2 + 1 + PANEL_WIDTH + 1,
+                "misaligned: {line:?}"
+            );
+        }
     }
 
     #[test]

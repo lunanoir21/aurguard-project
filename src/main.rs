@@ -71,6 +71,11 @@ struct Cli {
     /// (clean|risky|critical). Overrides the config policy.
     #[arg(long = "fail-on", value_name = "SEVERITY")]
     fail_on: Option<String>,
+
+    /// Package name(s) given without a flag: show the report (like -I), or
+    /// suggest packages whose name contains the term if there is no exact match.
+    #[arg(value_name = "PACKAGE")]
+    packages: Vec<String>,
 }
 
 #[tokio::main]
@@ -100,7 +105,11 @@ async fn run(cli: Cli) -> Result<i32> {
     let lang = config.ui.lang;
 
     // Localized help: explicit --help, or no operation selected.
-    let no_op = !cli.query && cli.file.is_none() && cli.info.is_empty() && cli.sync.is_empty();
+    let no_op = !cli.query
+        && cli.file.is_none()
+        && cli.info.is_empty()
+        && cli.sync.is_empty()
+        && cli.packages.is_empty();
     if cli.help || no_op {
         print!("{}", i18n::help_text(lang));
         return Ok(0);
@@ -114,11 +123,13 @@ async fn run(cli: Cli) -> Result<i32> {
     if let Some(path) = cli.file.clone() {
         return analyze_file(&path, &cli, &config, opts);
     }
-    if !cli.info.is_empty() {
-        return info(&cli.info.clone(), &cli, &config, opts).await;
-    }
     if !cli.sync.is_empty() {
         return sync(&cli.sync.clone(), &cli, &config, opts).await;
+    }
+    // Both -I packages and bare positional packages are report-only lookups.
+    let report_targets: Vec<String> = cli.info.iter().chain(&cli.packages).cloned().collect();
+    if !report_targets.is_empty() {
+        return info(&report_targets, &cli, &config, opts).await;
     }
 
     unreachable!("no_op already handled above")
@@ -223,7 +234,12 @@ async fn resolve(
     opts: UiOptions,
     client: &AurClient,
 ) -> Result<Option<PackageInfo>> {
-    let sp = (!quiet).then(|| ui::spinner(&format!("Fetching {query}…"), opts));
+    let sp = (!quiet).then(|| {
+        ui::spinner(
+            &i18n::fill(i18n::t(opts.lang, K::Fetching), Some(query)),
+            opts,
+        )
+    });
     let result = lookup(query, client).await;
     if let Some(sp) = sp {
         ui::finish_spinner(sp);
@@ -233,7 +249,12 @@ async fn resolve(
         Lookup::Found(meta) => Ok(Some(meta)),
         Lookup::Suggestions(hits) => match ui::pick_suggestion(query, &hits, interactive, opts) {
             Some(name) => {
-                let sp = (!quiet).then(|| ui::spinner(&format!("Fetching {name}…"), opts));
+                let sp = (!quiet).then(|| {
+                    ui::spinner(
+                        &i18n::fill(i18n::t(opts.lang, K::Fetching), Some(&name)),
+                        opts,
+                    )
+                });
                 let meta = client.info(&name).await;
                 if let Some(sp) = sp {
                     ui::finish_spinner(sp);
@@ -303,7 +324,12 @@ async fn sync_one(
     let name = meta.name.clone();
 
     // Clone once; analysis and build both read this exact tree (no TOCTOU).
-    let sp = (!cli.json).then(|| ui::spinner(&format!("Cloning {name}…"), opts));
+    let sp = (!cli.json).then(|| {
+        ui::spinner(
+            &i18n::fill(i18n::t(opts.lang, K::Cloning), Some(&name)),
+            opts,
+        )
+    });
     let repo = ClonedRepo::clone(&name).await?;
     let sources = repo.read_sources()?;
     if let Some(sp) = sp {
