@@ -1,0 +1,39 @@
+{
+  "name": "aurguard",
+  "version": "0.1.0",
+  "description": "AUR package security guard — analyze before you install.",
+  "bin": {
+    "aurguard": "bin/aurguard"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "keywords": [
+    "aur",
+    "arch",
+    "linux",
+    "security",
+    "pacman",
+    "pkgbuild"
+  ],
+  "homepage": "https://github.com/aurguard/aurguard#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aurguard/aurguard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aurguard/aurguard/issues"
+  },
+  "license": "MIT",
+  "files": [
+    "install.js",
+    "README.md"
+  ]
+}
