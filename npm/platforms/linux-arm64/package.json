@@ -1,0 +1,20 @@
+{
+  "name": "aurguard-linux-arm64",
+  "version": "1.0.1",
+  "description": "Prebuilt aurguard binary for linux-arm64 (installed automatically by `aurguard`).",
+  "license": "MIT",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/aurguard"
+  ],
+  "homepage": "https://github.com/lunanoir21/aurguard-project#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lunanoir21/aurguard-project.git"
+  }
+}

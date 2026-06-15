@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>aurguard — AUR package security guard</title>
+    <meta
+      name="description"
+      content="aurguard analyzes AUR packages before you install them — clone-first, tree-sitter-bash AST, a YARA-style signature engine, five languages, zero telemetry."
+    />
+    <meta property="og:title" content="aurguard — analyze before you install" />
+    <meta
+      property="og:description"
+      content="A security guard for the Arch User Repository: static analysis of PKGBUILDs and install scriptlets before anything runs as root."
+    />
+    <meta property="og:image" content="assets/demo.gif" />
+    <style>
+      :root {
+        --bg: #16161e;
+        --bg2: #1a1b26;
+        --panel: #24283b;
+        --line: #2a2e44;
+        --fg: #c0caf5;
+        --muted: #565f89;
+        --blue: #7aa2f7;
+        --purple: #bb9af7;
+        --green: #9ece6a;
+        --red: #f7768e;
+        --orange: #e0af68;
+        --cyan: #7dcfff;
+        --mono: "JetBrains Mono", "DejaVu Sans Mono", ui-monospace, SFMono-Regular,
+          Menlo, monospace;
+        --sans: "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: radial-gradient(1200px 600px at 50% -10%, #1f2335 0%, var(--bg) 55%);
+        color: var(--fg);
+        font-family: var(--sans);
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      a {
+        color: var(--blue);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      .wrap {
+        max-width: 980px;
+        margin: 0 auto;
+        padding: 0 22px;
+      }
+      code,
+      kbd,
+      pre {
+        font-family: var(--mono);
+      }
+
+      /* ---- nav ---- */
+      nav {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 20px 22px;
+        max-width: 980px;
+        margin: 0 auto;
+      }
+      .brand {
+        font-family: var(--mono);
+        font-weight: 700;
+        font-size: 18px;
+        color: var(--fg);
+      }
+      .brand .g {
+        color: var(--green);
+      }
+      .nav-links a {
+        color: var(--muted);
+        margin-left: 20px;
+        font-size: 14px;
+      }
+      .nav-links a:hover {
+        color: var(--fg);
+        text-decoration: none;
+      }
+
+      /* ---- hero ---- */
+      .hero {
+        text-align: center;
+        padding: 46px 0 14px;
+      }
+      .hero h1 {
+        font-family: var(--mono);
+        font-size: clamp(40px, 8vw, 76px);
+        margin: 0;
+        letter-spacing: -2px;
+        background: linear-gradient(120deg, var(--blue), var(--purple) 55%, var(--cyan));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .tag {
+        font-size: clamp(16px, 2.6vw, 21px);
+        color: var(--fg);
+        margin: 14px auto 8px;
+        max-width: 620px;
+      }
+      .sub {
+        color: var(--muted);
+        max-width: 600px;
+        margin: 0 auto 26px;
+      }
+      .badges {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        justify-content: center;
+        margin-bottom: 26px;
+      }
+      .badge {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--muted);
+        border: 1px solid var(--line);
+        background: var(--bg2);
+        border-radius: 999px;
+        padding: 4px 12px;
+      }
+      .badge b {
+        color: var(--green);
+        font-weight: 600;
+      }
+      .cta {
+        display: flex;
+        gap: 12px;
+        justify-content: center;
+        flex-wrap: wrap;
+        margin-bottom: 34px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 22px;
+        border-radius: 10px;
+        font-weight: 600;
+        font-size: 15px;
+        border: 1px solid transparent;
+      }
+      .btn-primary {
+        background: var(--blue);
+        color: #0b0d17;
+      }
+      .btn-primary:hover {
+        background: #94b4fb;
+        text-decoration: none;
+      }
+      .btn-ghost {
+        border-color: var(--line);
+        color: var(--fg);
+        background: var(--bg2);
+      }
+      .btn-ghost:hover {
+        border-color: var(--blue);
+        text-decoration: none;
+      }
+
+      /* ---- terminal frame ---- */
+      .term {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        overflow: hidden;
+        background: var(--bg2);
+        box-shadow: 0 30px 80px -30px rgba(0, 0, 0, 0.8);
+        margin: 8px 0 10px;
+      }
+      .term-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 16px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--line);
+      }
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+      .term-title {
+        margin-left: 10px;
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .term img {
+        display: block;
+        width: 100%;
+        height: auto;
+      }
+      .caption {
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+        margin-bottom: 44px;
+      }
+
+      /* ---- sections ---- */
+      section {
+        padding: 40px 0;
+        border-top: 1px solid var(--line);
+      }
+      h2 {
+        font-family: var(--mono);
+        font-size: 26px;
+        margin: 0 0 6px;
+      }
+      h2 .hash {
+        color: var(--purple);
+      }
+      .lead {
+        color: var(--muted);
+        margin: 0 0 26px;
+        max-width: 680px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: var(--bg2);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 20px;
+      }
+      .card h3 {
+        font-family: var(--mono);
+        font-size: 16px;
+        margin: 0 0 8px;
+        color: var(--fg);
+      }
+      .card .ico {
+        font-size: 22px;
+        display: block;
+        margin-bottom: 10px;
+      }
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      /* ---- detection chips ---- */
+      .rules {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .chip {
+        font-family: var(--mono);
+        font-size: 12.5px;
+        padding: 6px 11px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--bg2);
+      }
+      .chip.crit {
+        color: var(--red);
+        border-color: rgba(247, 118, 142, 0.35);
+      }
+      .chip.warn {
+        color: var(--orange);
+        border-color: rgba(224, 175, 104, 0.35);
+      }
+
+      /* ---- install ---- */
+      pre.code {
+        background: var(--bg2);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 18px 20px;
+        overflow-x: auto;
+        font-size: 14px;
+        color: var(--fg);
+        margin: 0 0 16px;
+      }
+      pre.code .c {
+        color: var(--muted);
+      }
+      pre.code .p {
+        color: var(--green);
+      }
+      .note {
+        font-size: 13.5px;
+        color: var(--muted);
+        border-left: 3px solid var(--blue);
+        padding: 4px 0 4px 14px;
+        margin: 4px 0 0;
+      }
+      .langs {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-top: 6px;
+      }
+      .lang {
+        font-family: var(--mono);
+        font-size: 13px;
+        color: var(--fg);
+        background: var(--bg2);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 6px 12px;
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 30px 0 50px;
+        text-align: center;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      footer .brand {
+        font-size: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <span class="brand"><span class="g">~</span> aurguard</span>
+      <span class="nav-links">
+        <a href="#why">Why</a>
+        <a href="#features">Features</a>
+        <a href="#detect">Detection</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/lunanoir21/aurguard-project">GitHub</a>
+      </span>
+    </nav>
+
+    <header class="hero wrap">
+      <h1>aurguard</h1>
+      <p class="tag">A security guard for the Arch User Repository.<br />Analyze before you install.</p>
+      <p class="sub">
+        Every AUR package is a build script a stranger wrote that runs on your
+        machine. aurguard reads the <code>PKGBUILD</code> and install scriptlets
+        <em>first</em> — and never executes anything to do it.
+      </p>
+
+      <div class="badges">
+        <span class="badge">Platform <b>Arch / Linux</b></span>
+        <span class="badge">Written in <b>Rust</b></span>
+        <span class="badge"><b>5</b> languages</span>
+        <span class="badge"><b>0</b> telemetry</span>
+        <span class="badge">MIT</span>
+      </div>
+
+      <div class="cta">
+        <a class="btn btn-primary" href="#install">▸ Install</a>
+        <a class="btn btn-ghost" href="https://github.com/lunanoir21/aurguard-project"
+          >★ Star on GitHub</a
+        >
+      </div>
+
+      <div class="term">
+        <div class="term-bar">
+          <span class="dot" style="background: #f7768e"></span>
+          <span class="dot" style="background: #e0af68"></span>
+          <span class="dot" style="background: #9ece6a"></span>
+          <span class="term-title">aurguard — security report</span>
+        </div>
+        <img src="assets/demo.gif" alt="aurguard analyzing AUR packages in the terminal" />
+      </div>
+      <p class="caption">
+        Clean report, a wrapped WARN finding, and the same report in Turkish via
+        <code>--lang tr</code>.
+      </p>
+    </header>
+
+    <main class="wrap">
+      <section id="why">
+        <h2><span class="hash">#</span> Why</h2>
+        <p class="lead">
+          AUR helpers happily run untrusted build code as your user — and
+          <code>.install</code> scriptlets as <b>root</b>. A typo-squatted package, a
+          hijacked maintainer account, or a single <code>curl … | sh</code> line is all
+          it takes. aurguard puts a review step in front of that.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <span class="ico">🧬</span>
+            <h3>Clone-first, TOCTOU-safe</h3>
+            <p>
+              The repo is cloned once, then the <em>same</em> tree is analyzed and
+              built — no swap between what you read and what runs.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🌳</span>
+            <h3>Real bash parsing</h3>
+            <p>
+              A <code>tree-sitter-bash</code> AST sees <code>eval</code> and
+              pipe-into-shell through quoting tricks, comments, and here-docs.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🚫</span>
+            <h3>Never executes</h3>
+            <p>
+              Analysis is purely static. A clean report means “no known-bad shapes,”
+              and nothing in the package has run.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="features">
+        <h2><span class="hash">#</span> What it checks</h2>
+        <p class="lead">
+          Four analysis passes feed one report: the AST pass, textual heuristics, a
+          YARA-style signature database, and package metadata &amp; history.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <span class="ico">🔎</span>
+            <h3>YARA-style signatures</h3>
+            <p>
+              A dependency-free rule engine matches named malware shapes — miners,
+              exfiltration, persistence, defense-evasion — with vetoes that stay quiet
+              on legitimate <code>$pkgdir</code> packaging.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🌐</span>
+            <h3>Source &amp; metadata</h3>
+            <p>
+              Insecure/IP/shortened source URLs, <code>SKIP</code> checksums, untrusted
+              <code>git clone</code>, maintainer age, low votes, staleness, and
+              <code>pkgrel</code> churn.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🔐</span>
+            <h3>Root scriptlets</h3>
+            <p>
+              <code>.install</code> hooks run as root, so they get the full rule set
+              plus a flag for any network access at install time.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">📝</span>
+            <h3>Approval ledger</h3>
+            <p>
+              Approve a PKGBUILD once; aurguard surfaces silent upstream edits on the
+              next install via a content digest.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">⏿</span>
+            <h3>Scriptable</h3>
+            <p>
+              <code>--json</code> output and exit codes
+              (<code>0</code>/<code>10</code>/<code>20</code>) make it a clean CI gate.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🗣️</span>
+            <h3>Five languages</h3>
+            <p>Interface and findings localized end to end.</p>
+            <div class="langs">
+              <span class="lang">English</span>
+              <span class="lang">Türkçe</span>
+              <span class="lang">Français</span>
+              <span class="lang">Español</span>
+              <span class="lang">Azərbaycan</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="detect">
+        <h2><span class="hash">#</span> A sample of the rules</h2>
+        <p class="lead">
+          Findings are bucketed <b>INFO · WARN · CRITICAL</b>; a package's risk is the
+          highest severity it trips. CRITICAL is blocked by default.
+        </p>
+        <div class="rules">
+          <span class="chip crit">CURL_PIPE_SH</span>
+          <span class="chip crit">REVERSE_SHELL</span>
+          <span class="chip crit">CRYPTO_MINER</span>
+          <span class="chip crit">DISCORD_EXFIL</span>
+          <span class="chip crit">CRED_HARVEST</span>
+          <span class="chip crit">SSH_KEY_INJECT</span>
+          <span class="chip crit">CRON_PERSIST</span>
+          <span class="chip crit">SUID_BIT</span>
+          <span class="chip crit">DESTRUCTIVE</span>
+          <span class="chip crit">SYSTEM_PATH_WRITE</span>
+          <span class="chip warn">UNKNOWN_SOURCE</span>
+          <span class="chip warn">CHECKSUM_SKIP</span>
+          <span class="chip warn">INSTALL_NETWORK</span>
+          <span class="chip warn">URL_SHORTENER</span>
+          <span class="chip warn">INSECURE_FETCH</span>
+          <span class="chip warn">PIP_INDEX_HIJACK</span>
+        </div>
+      </section>
+
+      <section id="install">
+        <h2><span class="hash">#</span> Install</h2>
+        <p class="lead">Linux only — the AUR is Arch-specific.</p>
+
+        <h3 style="font-family: var(--mono); font-size: 15px; color: var(--muted)">
+          From source (recommended)
+        </h3>
+        <pre class="code"><span class="c"># needs the Rust toolchain + a C compiler (tree-sitter-bash grammar)</span>
+git clone https://github.com/lunanoir21/aurguard-project.git
+<span class="p">cd</span> aurguard-project
+cargo build --release
+./target/release/aurguard --setup</pre>
+
+        <h3 style="font-family: var(--mono); font-size: 15px; color: var(--muted)">
+          From npm
+        </h3>
+        <pre class="code">npm install -g aurguard</pre>
+        <p class="note">
+          The npm package is a thin launcher with <b>no install script</b>. The prebuilt
+          binary ships as a platform-specific optional dependency, so nothing is
+          downloaded or executed at install time — no <code>postinstall</code>, no
+          remote-code surface, zero runtime dependencies.
+        </p>
+
+        <h3
+          style="font-family: var(--mono); font-size: 15px; color: var(--muted); margin-top: 22px"
+        >
+          From crates.io
+        </h3>
+        <pre class="code">cargo install aurguard</pre>
+      </section>
+    </main>
+
+    <footer>
+      <div class="brand"><span class="g">~</span> aurguard</div>
+      <p>
+        MIT licensed · no telemetry ·
+        <a href="https://github.com/lunanoir21/aurguard-project">github.com/lunanoir21/aurguard-project</a>
+      </p>
+    </footer>
+  </body>
+</html>

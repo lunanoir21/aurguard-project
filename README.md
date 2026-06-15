@@ -54,7 +54,13 @@ cargo install aurguard
 npm install -g aurguard
 ```
 
-The npm package is a thin wrapper — on `postinstall` it downloads the correct prebuilt binary for your platform from GitHub Releases.
+The npm package is a thin launcher with **no install script**. The prebuilt
+binary ships as a platform-specific optional dependency
+(`aurguard-linux-x64` / `aurguard-linux-arm64`); npm installs only the one
+matching your os/cpu. Nothing is downloaded or executed at install time — so
+there is **no `postinstall` / `allow-scripts` prompt and no remote-code
+supply-chain surface** (the same property aurguard checks for in AUR packages).
+The `aurguard` package itself has **zero runtime dependencies**.
 
 > **Build note:** the analyzer embeds the `tree-sitter-bash` grammar, so building
 > from source needs a C compiler (`cc`/`gcc`) in addition to the Rust toolchain.

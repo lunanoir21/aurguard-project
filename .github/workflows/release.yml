@@ -104,14 +104,28 @@ jobs:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
 
-      - name: Sync package version to tag
-        working-directory: npm
+      - name: Download release binaries into the platform packages
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          dl() { # <triple> <platform-dir>
+            gh release download "v$VERSION" -p "aurguard-$1.tar.gz" -O "/tmp/$1.tgz" -R "$GITHUB_REPOSITORY"
+            mkdir -p "npm/platforms/$2/bin"
+            tar -xzf "/tmp/$1.tgz" -C "npm/platforms/$2/bin" aurguard
+            chmod +x "npm/platforms/$2/bin/aurguard"
+          }
+          dl x86_64-unknown-linux-gnu  linux-x64
+          dl aarch64-unknown-linux-gnu linux-arm64
 
-      - name: npm publish
-        working-directory: npm
+      - name: Sync all package versions to tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for dir in npm npm/platforms/linux-x64 npm/platforms/linux-arm64; do
+            ( cd "$dir" && npm version "$VERSION" --no-git-tag-version --allow-same-version )
+          done
+
+      - name: Publish (platform packages first, then the launcher)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -119,4 +133,8 @@ jobs:
             echo "NPM_TOKEN secret not set — skipping npm publish."
             exit 0
           fi
-          npm publish --access public --provenance
+          # The launcher's optionalDependencies must already exist on the
+          # registry, so publish the binary packages before the main one.
+          ( cd npm/platforms/linux-x64  && npm publish --access public --provenance )
+          ( cd npm/platforms/linux-arm64 && npm publish --access public --provenance )
+          ( cd npm                       && npm publish --access public --provenance )

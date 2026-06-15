@@ -8,8 +8,10 @@
 
 # npm wrapper
 npm/node_modules/
-npm/bin/
 npm/package-lock.json
+# Prebuilt binaries are produced by CI, not committed (the launcher
+# `npm/bin/aurguard.js` IS committed; the platform binaries are not).
+npm/platforms/*/bin/aurguard
 
 # Editor / OS junk
 .DS_Store

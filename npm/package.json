@@ -1,12 +1,13 @@
 {
   "name": "aurguard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AUR package security guard — analyze before you install.",
   "bin": {
-    "aurguard": "bin/aurguard"
+    "aurguard": "bin/aurguard.js"
   },
-  "scripts": {
-    "postinstall": "node install.js"
+  "optionalDependencies": {
+    "aurguard-linux-x64": "1.0.1",
+    "aurguard-linux-arm64": "1.0.1"
   },
   "os": [
     "linux"
@@ -33,7 +34,7 @@
   },
   "license": "MIT",
   "files": [
-    "install.js",
+    "bin/aurguard.js",
     "README.md"
   ]
 }

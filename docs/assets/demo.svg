@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="860" height="600" viewBox="0 0 860 600" font-family="'JetBrains Mono','DejaVu Sans Mono',ui-monospace,monospace">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1f2335"/>
+      <stop offset="1" stop-color="#16161e"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-color="#000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- window -->
+  <rect x="20" y="20" width="820" height="560" rx="14" fill="url(#bg)" filter="url(#shadow)"/>
+  <!-- title bar -->
+  <rect x="20" y="20" width="820" height="44" rx="14" fill="#24283b"/>
+  <rect x="20" y="50" width="820" height="14" fill="#24283b"/>
+  <circle cx="48" cy="42" r="7" fill="#f7768e"/>
+  <circle cx="72" cy="42" r="7" fill="#e0af68"/>
+  <circle cx="96" cy="42" r="7" fill="#9ece6a"/>
+  <text x="430" y="47" text-anchor="middle" font-size="14" fill="#565f89">aurguard — terminal</text>
+
+  <!-- command -->
+  <text x="44" y="100" font-size="16">
+    <tspan fill="#9ece6a">~</tspan>
+    <tspan fill="#7aa2f7"> ❯ </tspan>
+    <tspan fill="#c0caf5">aurguard </tspan>
+    <tspan fill="#e0af68">shady-tool</tspan>
+  </text>
+
+  <!-- report card -->
+  <rect x="44" y="128" width="772" height="350" rx="10" fill="#1a1b26" stroke="#2a2e44" stroke-width="1.5"/>
+  <text x="68" y="160" font-size="15" font-weight="700" fill="#bb9af7">aurguard — Security Report</text>
+  <line x1="68" y1="174" x2="792" y2="174" stroke="#2a2e44" stroke-width="1"/>
+
+  <!-- meta rows -->
+  <g font-size="15">
+    <text x="68" y="204"><tspan fill="#565f89">Package      </tspan><tspan fill="#c0caf5">shady-tool 1.0-1</tspan></text>
+    <text x="68" y="230"><tspan fill="#565f89">Maintainer   </tspan><tspan fill="#c0caf5">newuser99 </tspan><tspan fill="#e0af68">(since 3 months ago)</tspan></text>
+    <text x="68" y="256"><tspan fill="#565f89">Votes        </tspan><tspan fill="#c0caf5">2</tspan></text>
+    <text x="68" y="282"><tspan fill="#565f89">Last update  </tspan><tspan fill="#c0caf5">1 day ago</tspan></text>
+    <text x="68" y="312"><tspan fill="#565f89">Sources      </tspan><tspan fill="#c0caf5">unknown-site.ru </tspan><tspan fill="#f7768e" font-weight="700">✗</tspan></text>
+  </g>
+
+  <!-- findings -->
+  <text x="68" y="346" font-size="13" fill="#565f89" letter-spacing="1.5">FINDINGS</text>
+
+  <g font-size="14.5">
+    <!-- CRITICAL -->
+    <rect x="68" y="356" width="86" height="22" rx="5" fill="#f7768e" fill-opacity="0.18"/>
+    <text x="78" y="372" fill="#f7768e" font-weight="700">✖ CRITICAL</text>
+    <text x="168" y="372" fill="#c0caf5">curl piped to bash detected</text>
+    <text x="690" y="372" fill="#565f89">line 14</text>
+
+    <!-- WARN -->
+    <rect x="68" y="388" width="86" height="22" rx="5" fill="#e0af68" fill-opacity="0.16"/>
+    <text x="78" y="404" fill="#e0af68" font-weight="700">⚠ WARN</text>
+    <text x="168" y="404" fill="#c0caf5">Unknown source domain: unknown-site.ru</text>
+
+    <!-- WARN -->
+    <rect x="68" y="420" width="86" height="22" rx="5" fill="#e0af68" fill-opacity="0.16"/>
+    <text x="78" y="436" fill="#e0af68" font-weight="700">⚠ WARN</text>
+    <text x="168" y="436" fill="#c0caf5">Low community trust (2 votes)</text>
+
+    <!-- INFO -->
+    <rect x="68" y="452" width="86" height="22" rx="5" fill="#7aa2f7" fill-opacity="0.16"/>
+    <text x="78" y="468" fill="#7aa2f7" font-weight="700">ℹ INFO</text>
+    <text x="168" y="468" fill="#c0caf5">Source built from git HEAD, not a release</text>
+  </g>
+
+  <!-- prompt -->
+  <text x="44" y="520" font-size="16">
+    <tspan fill="#f7768e" font-weight="700">✖</tspan>
+    <tspan fill="#c0caf5">  Critical risks detected. Install anyway? </tspan>
+    <tspan fill="#565f89">[y/N]</tspan>
+    <tspan fill="#c0caf5"> </tspan>
+    <tspan fill="#7aa2f7">▌</tspan>
+  </text>
+
+  <text x="44" y="556" font-size="13" fill="#414868">multilingual · clone-first · tree-sitter-bash AST · no telemetry</text>
+</svg>

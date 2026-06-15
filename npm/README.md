@@ -2,8 +2,10 @@
 
 > AUR package security guard — analyze before you install.
 
-This is the npm wrapper. On install it downloads the prebuilt `aurguard` binary
-for your platform from GitHub Releases.
+This is a thin launcher with **no install script**. The prebuilt `aurguard`
+binary ships as a platform-specific optional dependency, so npm installs only
+the one matching your os/cpu — nothing is downloaded or executed at install
+time (no `postinstall`, no remote-code surface). Zero runtime dependencies.
 
 ```sh
 npm install -g aurguard
