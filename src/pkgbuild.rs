@@ -455,6 +455,9 @@ fn scan_script(text: &str, sources: &[SourceHost], config: &Config, findings: &m
 
         // High-signal dangerous-command patterns.
         scan_dangerous_line(&lower, &line, lineno, findings);
+
+        // YARA-style signature database (miners, exfil, persistence, …).
+        crate::rules::scan_line(&lower, lineno, findings);
     }
 
     // install() function or install= directive present.
@@ -763,11 +766,18 @@ fn scan_install_scripts(scripts: &[(String, String)], findings: &mut Vec<Finding
                 format!("in {name}: {}", f.message),
             ));
         }
-        // Curl-to-file then run, and eval, are already covered by the AST pass;
-        // additionally flag any network fetch inside an install scriptlet.
-        for raw in body.lines() {
-            let lower = strip_comment(raw).to_ascii_lowercase();
-            if lower.contains("curl") || lower.contains("wget") {
+        // Install scriptlets run as root, so apply the full line-level rule set
+        // (destructive/reverse-shell heuristics + the signature database) in
+        // addition to the AST pass, and flag any network fetch.
+        let mut flagged_network = false;
+        for (idx, raw) in body.lines().enumerate() {
+            let line = strip_comment(raw);
+            let lower = line.to_ascii_lowercase();
+            if lower.trim().is_empty() {
+                continue;
+            }
+            let lineno = idx + 1;
+            if !flagged_network && (lower.contains("curl") || lower.contains("wget")) {
                 findings.push(
                     Finding::meta(
                         Severity::Warn,
@@ -776,8 +786,10 @@ fn scan_install_scripts(scripts: &[(String, String)], findings: &mut Vec<Finding
                     )
                     .with_arg(name.clone()),
                 );
-                break;
+                flagged_network = true;
             }
+            scan_dangerous_line(&lower, &line, lineno, findings);
+            crate::rules::scan_line(&lower, lineno, findings);
         }
     }
 }

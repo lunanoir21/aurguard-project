@@ -21,6 +21,7 @@ pub mod i18n;
 pub mod installer;
 pub mod pkgbuild;
 pub mod report;
+pub mod rules;
 pub mod ui;
 pub mod wizard;
 

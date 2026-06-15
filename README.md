@@ -182,7 +182,7 @@ All diagnostic output goes to **stderr**; only `makepkg`'s build output goes to 
 
 ### Static analysis
 
-Analysis layers three passes over the build sources (the `PKGBUILD` **and** any
+Analysis layers four passes over the build sources (the `PKGBUILD` **and** any
 `.install` scriptlets, which run as root on install):
 
 1. **AST pass** — the script is parsed with `tree-sitter-bash`. Because commands,
@@ -191,7 +191,11 @@ Analysis layers three passes over the build sources (the `PKGBUILD` **and** any
    string/comment noise, and here-docs that fool plain substring matching.
 2. **Textual rules** — source URLs, checksums, `/tmp` staging, `chmod +x`,
    fetch-then-run, and `git clone` of untrusted repos.
-3. **Metadata & history** — votes, maintainer age, staleness, `pkgrel` churn,
+3. **Signature database** — a YARA-style engine (`src/rules.rs`) matches named
+   malware signatures: crypto miners, Discord/Telegram exfiltration, credential
+   harvesting, SSH/cron persistence, and defense-evasion, with `not`-string
+   vetoes to stay quiet on legitimate `$pkgdir` packaging.
+4. **Metadata & history** — votes, maintainer age, staleness, `pkgrel` churn,
    plus change-tracking against your last approval.
 
 Each match becomes a `Finding { severity, code, message, line }`. The package's
@@ -223,6 +227,31 @@ Severity levels: **INFO** · **WARN** · **CRITICAL**.
 | `PYTHON_ENC_EXEC` | `python/perl/ruby -c` with `exec`/base64                 | Encoded inline payload in an interpreter              |
 
 All of the above are detected inside `.install` scriptlets too (which run as root).
+
+### Signature database — YARA-style
+
+In addition to the heuristics above, aurguard ships a small **YARA-style
+signature engine** (`src/rules.rs`). Each rule is a named signature with a
+severity, classification tags, and a condition in conjunctive normal form
+(every clause must match; a clause matches if any alternative is present),
+plus negative `not` strings that veto false positives — e.g. a cron file
+installed into `$pkgdir` is legitimate packaging, not persistence. The same
+ruleset runs over the `PKGBUILD` and over root-privileged `.install` scripts.
+
+| Code               | Severity   | What it detects                                              |
+| ------------------ | ---------- | ------------------------------------------------------------ |
+| `CRYPTO_MINER`     | CRITICAL   | `xmrig`, `stratum+tcp`, `minerd`, `randomx`, known mining pools |
+| `DISCORD_EXFIL`    | CRITICAL   | data sent to a Discord webhook                               |
+| `TELEGRAM_EXFIL`   | CRITICAL   | exfiltration via the Telegram bot API                       |
+| `SSH_KEY_INJECT`   | CRITICAL   | writing an `authorized_keys` entry outside `$pkgdir`         |
+| `CRON_PERSIST`     | CRITICAL   | installing a cron job for persistence                       |
+| `CRED_HARVEST`     | CRITICAL   | reading `id_rsa`, `.aws/credentials`, `wallet.dat`, `.netrc`, … |
+| `ENV_EXFIL`        | CRITICAL   | piping `printenv`/`/etc/passwd` into a network command       |
+| `DISABLE_SECURITY` | CRITICAL   | `setenforce 0`, `iptables -F`, `ufw disable`, stopping firewalld |
+| `PASTE_PAYLOAD`    | WARN       | fetching from `pastebin/raw`, `transfer.sh`, `0x0.st`, …      |
+| `SYSTEMD_PERSIST`  | WARN       | enabling/starting a systemd service from the build           |
+| `INSECURE_FETCH`   | WARN       | `curl -k` / `wget --no-check-certificate` (TLS off)          |
+| `PIP_INDEX_HIJACK` | WARN       | `pip install --index-url` pointing at a non-default index    |
 
 ### WARN — review recommended
 
@@ -421,8 +450,8 @@ aurguard/
 ## Building from source
 
 ```sh
-git clone https://github.com/<you>/aurguard.git
-cd aurguard
+git clone https://github.com/lunanoir21/aurguard-project.git
+cd aurguard-project
 cargo build --release
 # binary at target/release/aurguard
 ```
@@ -431,7 +460,7 @@ cargo build --release
 
 - `cargo fmt --check` — formatted
 - `cargo clippy -- -D warnings` — zero warnings
-- `cargo test` — 62 unit + 12 integration tests: every CRITICAL rule, the AST pass, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
+- `cargo test` — 65 unit + 14 integration tests: every CRITICAL rule, the YARA-style signature database, the AST pass, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
 - No raw `unwrap()` in non-test code — all errors flow through `anyhow`
 - Release profile tuned for size: `opt-level = "z"`, `lto`, `strip = true`
 

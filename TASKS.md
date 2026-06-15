@@ -2,6 +2,17 @@
 
 Status legend: ⬜ todo · 🔨 in progress · ✅ done
 
+## Phase 16 — 1.0.0 release
+- ✅ T16.1 Fix CI: `unnecessary_sort_by` clippy error on rustc 1.96 (`Report::finalize`)
+- ✅ T16.2 Pin local toolchain to stable so clippy matches CI
+- ✅ T16.3 YARA-style signature engine (`src/rules.rs`): 12 rules, CNF + `not` vetoes
+- ✅ T16.4 New signatures: miners, Discord/Telegram exfil, SSH/cron persistence,
+  credential harvesting, env exfil, defense-evasion, insecure fetch, pip index hijack
+- ✅ T16.5 Signatures run over `.install` scriptlets (root) too; i18n in all 5 langs
+- ✅ T16.6 Bump version 0.1.0 → 1.0.0 (Cargo.toml + npm/package.json)
+- ✅ T16.7 79 tests (65 unit + 14 integration) green; clippy/fmt clean
+- ⬜ T16.8 USER: ensure `NPM_TOKEN` repo secret is set, then push tag `v1.0.0`
+
 ## Phase 0 — Scaffolding
 - ✅ T0.1  Create `Cargo.toml` with deps + release profile (`opt-level=z`, `strip`, `lto`)
 - ✅ T0.2  Create `LICENSE` (MIT)

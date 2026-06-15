@@ -1,6 +1,6 @@
 {
   "name": "aurguard",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "AUR package security guard — analyze before you install.",
   "bin": {
     "aurguard": "bin/aurguard"
