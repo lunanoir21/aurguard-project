@@ -781,6 +781,41 @@ pub fn finding(lang: Lang, code: &str) -> Option<&'static str> {
             Es => "Perfil de análisis profundo — decode/ioc/taint/delta activos ({})",
             Az => "Dərin tarama profili — decode/ioc/taint/delta aktiv ({})",
         },
+        "EVASION_NORMALIZED" => match lang {
+            En => "Obfuscated command revealed after normalization ({})",
+            Tr => "Gizlenmiş komut normalleştirme sonrası ortaya çıktı ({})",
+            Fr => "Commande obfusquée révélée après normalisation ({})",
+            Es => "Comando ofuscado revelado tras la normalización ({})",
+            Az => "Gizlədilmiş əmr normallaşdırmadan sonra aşkar edildi ({})",
+        },
+        "COMMITTED_BINARY" => match lang {
+            En => "Prebuilt binary committed in the package tree: {}",
+            Tr => "Paket ağacına gömülü önceden derlenmiş ikili dosya: {}",
+            Fr => "Binaire précompilé présent dans l'arbre du paquet : {}",
+            Es => "Binario precompilado incluido en el árbol del paquete: {}",
+            Az => "Paket ağacına əlavə edilmiş öncədən qurulmuş ikili fayl: {}",
+        },
+        "PKGVER_EXEC" => match lang {
+            En => "pkgver() runs code at build time ({})",
+            Tr => "pkgver() derleme sırasında kod çalıştırıyor ({})",
+            Fr => "pkgver() exécute du code lors de la compilation ({})",
+            Es => "pkgver() ejecuta código durante la compilación ({})",
+            Az => "pkgver() qurma zamanı kod icra edir ({})",
+        },
+        "MISSING_PGP" => match lang {
+            En => "Source ships a PGP signature but no validpgpkeys is set (unverifiable)",
+            Tr => "Kaynak PGP imzası içeriyor ama validpgpkeys tanımlı değil (doğrulanamaz)",
+            Fr => "La source fournit une signature PGP mais validpgpkeys n'est pas défini (invérifiable)",
+            Es => "La fuente trae una firma PGP pero no hay validpgpkeys (no verificable)",
+            Az => "Mənbə PGP imzası gətirir, lakin validpgpkeys təyin edilməyib (yoxlanıla bilməz)",
+        },
+        "PGP_KEYSERVER_FETCH" => match lang {
+            En => "Imports a PGP key from a keyserver at build time (unpinned trust)",
+            Tr => "Derleme sırasında bir anahtar sunucusundan PGP anahtarı alıyor (sabitlenmemiş güven)",
+            Fr => "Importe une clé PGP depuis un serveur de clés à la compilation (confiance non figée)",
+            Es => "Importa una clave PGP de un servidor de claves al compilar (confianza no fijada)",
+            Az => "Qurma zamanı açar serverindən PGP açarı idxal edir (sabitlənməmiş etibar)",
+        },
         _ => return None,
     };
     Some(s)

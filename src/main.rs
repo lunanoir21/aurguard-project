@@ -12,6 +12,7 @@ use aurguard::i18n::{self, Lang, K};
 use aurguard::installer::{self, ClonedRepo};
 use aurguard::pkgbuild::{self, PkgSources, ScanOpts};
 use aurguard::report::Report;
+use aurguard::srcscan;
 use aurguard::ui::{self, UiOptions};
 use aurguard::wizard;
 use clap::Parser;
@@ -85,6 +86,10 @@ struct Cli {
     #[arg(long = "no-decode")]
     no_decode: bool,
 
+    /// Disable the constant-fold anti-evasion pass.
+    #[arg(long = "no-normalize")]
+    no_normalize: bool,
+
     /// Disable the IOC blocklist + crypto-wallet pass.
     #[arg(long = "no-ioc")]
     no_ioc: bool,
@@ -110,6 +115,7 @@ impl Cli {
     fn scan_opts(&self) -> ScanOpts {
         ScanOpts {
             decode: !self.no_decode,
+            normalize: !self.no_normalize,
             ioc: !self.no_ioc,
             taint: !self.no_taint,
             delta: !self.no_delta,
@@ -225,8 +231,20 @@ fn analyze_file(
         chrono::Utc::now(),
         cli.scan_opts(),
     );
+    // Note: the committed-binary tree scan (T2.4) runs only on the isolated
+    // `-S` clone, not on an arbitrary `--file` parent directory.
     present(&report, cli, opts)?;
     Ok(report.risk.exit_code())
+}
+
+/// Merge committed-binary findings from a real source tree into `report` and
+/// recompute its risk. No-op when the scan finds nothing.
+fn merge_srcscan(report: &mut Report, dir: &std::path::Path, lang: aurguard::i18n::Lang) {
+    let bins = srcscan::scan_tree(dir, lang);
+    if !bins.is_empty() {
+        report.findings.extend(bins);
+        report.finalize();
+    }
 }
 
 /// `-I`: report only for one or more packages. Exit code reflects the worst
@@ -392,7 +410,7 @@ async fn sync_one(
     }
 
     let prior = approvals.approval(&name).cloned();
-    let report = pkgbuild::analyze_with(
+    let mut report = pkgbuild::analyze_with(
         Some(&meta),
         &sources,
         config,
@@ -400,6 +418,8 @@ async fn sync_one(
         chrono::Utc::now(),
         cli.scan_opts(),
     );
+    // The clone is a real tree: scan it for committed prebuilt binaries (T2.4).
+    merge_srcscan(&mut report, repo.path(), config.ui.lang);
     present(&report, cli, opts)?;
 
     if !decide(&report, cli, threshold, opts) {

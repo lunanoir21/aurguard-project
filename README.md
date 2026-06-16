@@ -131,6 +131,7 @@ $ aurguard -S opencode
 | `--max`               | Maximum scrutiny — adds the noisier entropy / encoded-blob heuristics |
 | `-v`, `--verbose`     | Include the deep-scan profile and informational findings           |
 | `--no-decode`         | Disable the decode-and-rescan pass (base64/hex payloads)           |
+| `--no-normalize`      | Disable the constant-fold anti-evasion pass                       |
 | `--no-ioc`            | Disable the IOC blocklist + crypto-wallet pass                     |
 | `--no-taint`          | Disable the dataflow taint pass                                    |
 | `--no-delta`          | Disable version/maintainer delta tracking                         |
@@ -210,14 +211,21 @@ Analysis layers several passes over the build sources (the `PKGBUILD` **and** an
 4. **Decode-and-rescan** (`src/decode.rs`) — base64/hex blobs are decoded and
    the signature engine re-runs over the *decoded* bytes, catching payloads that
    are not present as plain text. `--max` adds entropy / encoded-blob heuristics.
-5. **IOC + wallet** (`src/ioc.rs`) — known-bad indicators (historic C2/drop
+5. **Normalize / constant-fold** (`src/normalize.rs`) — folds away quote-splitting
+   (`xmr""ig`), `${IFS}` word-splitting, and `$'\x65val'` byte escapes, then
+   rescans; surfaces the real finding plus `EVASION_NORMALIZED`.
+6. **IOC + wallet** (`src/ioc.rs`) — known-bad indicators (historic C2/drop
    hosts) and hardcoded BTC/ETH/XMR wallet addresses.
-6. **Dataflow taint** (`src/taint.rs`) — connects untrusted input
+7. **Dataflow taint** (`src/taint.rs`) — connects untrusted input
    (`x="$(curl …)"`) to a later execution sink (`eval "$x"`), defeating the
    split-across-lines trick that dodges single-line rules.
-7. **Metadata, history & delta** — votes, maintainer age, staleness, `pkgrel`
-   churn, change-tracking against your last approval, plus maintainer-change and
-   version-bump-introduces-new-risk detection.
+8. **`pkgver()` & PGP** — flags network/`eval` inside `pkgver()` (makepkg runs
+   it) and signature-bearing sources with no `validpgpkeys`.
+9. **Committed-binary scan** (`src/srcscan.rs`, `-S` only) — walks the cloned
+   tree for prebuilt ELF/PE/Mach-O/`.so`/`.pyc`/wasm artifacts.
+10. **Metadata, history & delta** — votes, maintainer age, staleness, `pkgrel`
+    churn, change-tracking against your last approval, plus maintainer-change and
+    version-bump-introduces-new-risk detection.
 
 Each match becomes a `Finding { severity, code, message, line }`. The package's
 overall risk is the highest severity among its findings. Findings can be
@@ -287,6 +295,11 @@ default; the noisier heuristics are gated behind `--max`.
 | `IOC_MATCH`         | CRITICAL   | ioc    | a known-bad indicator (historic C2 / drop host)                    |
 | `WALLET_ADDRESS`    | WARN       | ioc    | a hardcoded BTC / ETH / XMR wallet address                         |
 | `TAINTED_EXEC`      | CRITICAL   | taint  | untrusted input (`$(curl …)`) reaching an `eval`/`sh -c` sink      |
+| `EVASION_NORMALIZED`| WARN       | normalize | obfuscation revealed after constant-folding (`xmr""ig`, `${IFS}`) |
+| `PKGVER_EXEC`       | CRITICAL   | pkgver | `pkgver()` runs network/`eval` at build time (makepkg executes it) |
+| `COMMITTED_BINARY`  | CRITICAL   | srcscan | a prebuilt executable committed in the package tree (`-S` only)   |
+| `MISSING_PGP`       | WARN       | pgp    | a `.sig`/`.asc` source with no `validpgpkeys` (unverifiable)       |
+| `PGP_KEYSERVER_FETCH` | WARN     | pgp    | imports a PGP key from a keyserver at build time (unpinned trust)  |
 | `MAINTAINER_CHANGED`| WARN       | delta  | the AUR maintainer changed since you approved the package          |
 | `DELTA_NEW_RISK`    | WARN/CRIT  | delta  | a version bump introduced a finding absent at approval time        |
 
@@ -497,7 +510,7 @@ cargo build --release
 
 - `cargo fmt --check` — formatted
 - `cargo clippy -- -D warnings` — zero warnings
-- `cargo test` — 78 unit + 20 integration tests: every CRITICAL rule, the YARA-style signature database, the AST pass, the decode/IOC/taint/delta deep passes, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
+- `cargo test` — 86 unit + 24 integration tests: every CRITICAL rule, the YARA-style signature database, the AST pass, the decode/normalize/IOC/taint/delta/pkgver/PGP/srcscan deep passes, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
 - No raw `unwrap()` in non-test code — all errors flow through `anyhow`
 - Release profile tuned for size: `opt-level = "z"`, `lto`, `strip = true`
 
