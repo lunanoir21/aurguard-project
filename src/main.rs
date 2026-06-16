@@ -14,6 +14,7 @@ use aurguard::pkgbuild::{self, PkgSources, ScanOpts};
 use aurguard::report::Report;
 use aurguard::srcscan;
 use aurguard::ui::{self, UiOptions};
+use aurguard::vt;
 use aurguard::wizard;
 use clap::Parser;
 use std::path::PathBuf;
@@ -101,6 +102,12 @@ struct Cli {
     /// Disable version/maintainer delta tracking.
     #[arg(long = "no-delta")]
     no_delta: bool,
+
+    /// Look committed-binary hashes up on the VirusTotal API (opt-in; needs a
+    /// key in config `[virustotal]` or `AURGUARD_VT_KEY`). Without this, only an
+    /// offline hash + link is shown.
+    #[arg(long = "vt")]
+    vt: bool,
 
     /// Package name(s) given without a flag: show the report (like -I), or
     /// suggest packages whose name contains the term if there is no exact match.
@@ -237,14 +244,16 @@ fn analyze_file(
     Ok(report.risk.exit_code())
 }
 
-/// Merge committed-binary findings from a real source tree into `report` and
-/// recompute its risk. No-op when the scan finds nothing.
-fn merge_srcscan(report: &mut Report, dir: &std::path::Path, lang: aurguard::i18n::Lang) {
-    let bins = srcscan::scan_tree(dir, lang);
-    if !bins.is_empty() {
-        report.findings.extend(bins);
-        report.finalize();
+/// Scan the source tree for committed binaries, append a `COMMITTED_BINARY`
+/// finding and an offline VirusTotal hint for each, and return the binaries so
+/// the caller can run an (opt-in) API lookup. Does not finalize the report.
+fn add_srcscan(report: &mut Report, dir: &std::path::Path, lang: Lang) -> Vec<srcscan::Binary> {
+    let bins = srcscan::scan_tree(dir);
+    for b in &bins {
+        report.findings.push(b.finding(lang));
     }
+    report.findings.extend(vt::offline_hints(&bins, lang));
+    bins
 }
 
 /// `-I`: report only for one or more packages. Exit code reflects the worst
@@ -418,8 +427,28 @@ async fn sync_one(
         chrono::Utc::now(),
         cli.scan_opts(),
     );
-    // The clone is a real tree: scan it for committed prebuilt binaries (T2.4).
-    merge_srcscan(&mut report, repo.path(), config.ui.lang);
+    // The clone is a real tree: scan it for committed prebuilt binaries (T2.4),
+    // attach offline VirusTotal hints, and — when opted in — query the VT API.
+    let bins = add_srcscan(&mut report, repo.path(), config.ui.lang);
+    if !bins.is_empty() {
+        if cli.vt || config.virustotal.enabled {
+            match config.virustotal.key() {
+                Some(key) => {
+                    let sp = (!cli.json).then(|| ui::spinner("VirusTotal", opts));
+                    let vtf = vt::api_findings(&key, &bins, config.ui.lang).await;
+                    if let Some(sp) = sp {
+                        ui::finish_spinner(sp);
+                    }
+                    report.findings.extend(vtf);
+                }
+                None => ui::error(
+                    "--vt needs an API key: set [virustotal].api_key or AURGUARD_VT_KEY.",
+                    opts,
+                ),
+            }
+        }
+        report.finalize();
+    }
     present(&report, cli, opts)?;
 
     if !decide(&report, cli, threshold, opts) {

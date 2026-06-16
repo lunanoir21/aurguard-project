@@ -36,6 +36,34 @@ pub struct Config {
     pub rules: Rules,
     /// Install policy / CI gating.
     pub policy: Policy,
+    /// VirusTotal integration.
+    pub virustotal: VirusTotal,
+}
+
+/// `[virustotal]` section.
+///
+/// Looking a hash up on VirusTotal sends it to a third party, so the API lookup
+/// is strictly opt-in (`enabled = true` here, or `--vt` on the command line).
+/// The offline hash hint — printing the SHA-256 plus a VT link to check by hand
+/// — needs no key and sends nothing.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct VirusTotal {
+    /// VirusTotal API key. The `AURGUARD_VT_KEY` environment variable overrides
+    /// it. Without a key, only the offline hint is shown.
+    pub api_key: Option<String>,
+    /// Query the VirusTotal API automatically when committed binaries are found.
+    pub enabled: bool,
+}
+
+impl VirusTotal {
+    /// Resolve the effective API key: `AURGUARD_VT_KEY` env wins, else config.
+    pub fn key(&self) -> Option<String> {
+        std::env::var("AURGUARD_VT_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| self.api_key.clone().filter(|s| !s.trim().is_empty()))
+    }
 }
 
 /// `[ui]` section.
@@ -195,5 +223,28 @@ mod tests {
         assert_eq!("critical".parse::<FailOn>().unwrap(), FailOn::Critical);
         assert_eq!("warn".parse::<FailOn>().unwrap(), FailOn::Risky);
         assert!("bogus".parse::<FailOn>().is_err());
+    }
+
+    #[test]
+    fn virustotal_section_parses() {
+        let toml = r#"
+            [virustotal]
+            api_key = "deadbeef"
+            enabled = true
+        "#;
+        let cfg: Config = toml::from_str(toml).unwrap();
+        assert!(cfg.virustotal.enabled);
+        // No env override set here, so the config key is used.
+        assert_eq!(cfg.virustotal.key().as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
+    fn virustotal_key_defaults_none() {
+        let cfg = Config::default();
+        assert!(!cfg.virustotal.enabled);
+        // Guard against a stray env var in the test environment.
+        if std::env::var_os("AURGUARD_VT_KEY").is_none() {
+            assert!(cfg.virustotal.key().is_none());
+        }
     }
 }

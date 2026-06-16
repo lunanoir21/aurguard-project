@@ -12,6 +12,7 @@
 //! - [`normalize`] — constant-fold anti-evasion (unquote/IFS/escape folding).
 //! - [`srcscan`] — committed prebuilt-binary detection over the source tree.
 //! - [`taint`] — dataflow taint from untrusted input to execution sinks.
+//! - [`vt`] — VirusTotal hash hints (offline) + optional API lookups.
 //! - [`report`] — findings, severities, and the aggregated [`report::Report`].
 //! - [`config`] — user configuration (trusted domains, rule ignores, policy).
 //! - [`diff`] — approved-PKGBUILD ledger for change tracking.
@@ -33,6 +34,7 @@ pub mod rules;
 pub mod srcscan;
 pub mod taint;
 pub mod ui;
+pub mod vt;
 pub mod wizard;
 
 pub use config::Config;

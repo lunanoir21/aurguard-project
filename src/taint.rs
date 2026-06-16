@@ -111,7 +111,7 @@ fn references(line: &str, var: &str) -> bool {
         let end = from + pos + needle.len();
         let next_ok = bytes
             .get(end)
-            .map_or(true, |&b| !(b.is_ascii_alphanumeric() || b == b'_'));
+            .is_none_or(|&b| !(b.is_ascii_alphanumeric() || b == b'_'));
         if next_ok {
             return true;
         }

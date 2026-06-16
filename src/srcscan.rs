@@ -5,13 +5,15 @@
 //! malware-delivery shortcut — the maintainer (or a hijacker) hands you an
 //! opaque blob that `package()` simply copies into place, with nothing to
 //! review. This pass walks the cloned tree and flags any file whose contents or
-//! extension identify it as a compiled binary.
+//! extension identify it as a compiled binary, hashing each one so it can be
+//! looked up on VirusTotal (see [`crate::vt`]).
 //!
-//! It runs only where a real tree exists: the clone-first `-S` flow and the
-//! `--file` sibling directory. Pure metadata/`-I` lookups never see a tree.
+//! It runs only where a real tree exists: the clone-first `-S` flow. Pure
+//! metadata/`-I` lookups never see a tree.
 
 use crate::i18n::{self, Lang};
 use crate::report::{Finding, Severity};
+use sha2::{Digest, Sha256};
 use std::path::Path;
 
 /// Directories never worth scanning (VCS metadata, build output).
@@ -24,17 +26,48 @@ const BINARY_EXTS: &[&str] = &[
 
 /// Cap the walk so a pathological tree cannot stall analysis.
 const MAX_FILES: usize = 4000;
+/// Skip hashing absurdly large files (still report them).
+const MAX_HASH_BYTES: u64 = 64 * 1024 * 1024;
 
-/// Scan the package tree rooted at `dir` for committed binaries, returning
-/// localized [`Finding`]s (`COMMITTED_BINARY`, Critical).
-pub fn scan_tree(dir: &Path, lang: Lang) -> Vec<Finding> {
-    let mut findings = Vec::new();
-    let mut budget = MAX_FILES;
-    walk(dir, dir, lang, &mut budget, &mut findings);
-    findings
+/// A committed binary found in the package tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Binary {
+    /// Path relative to the tree root.
+    pub path: String,
+    /// Detected format (`"ELF"`, `"PE/EXE"`, `"binary"`, …).
+    pub kind: &'static str,
+    /// Lower-case hex SHA-256 of the file, or `None` if it could not be read.
+    pub sha256: Option<String>,
 }
 
-fn walk(root: &Path, dir: &Path, lang: Lang, budget: &mut usize, out: &mut Vec<Finding>) {
+impl Binary {
+    /// The `COMMITTED_BINARY` finding for this file, localized to `lang`.
+    pub fn finding(&self, lang: Lang) -> Finding {
+        let arg = match &self.sha256 {
+            Some(h) => format!("{} ({}) sha256:{h}", self.path, self.kind),
+            None => format!("{} ({})", self.path, self.kind),
+        };
+        let tpl = i18n::finding(lang, "COMMITTED_BINARY")
+            .unwrap_or("Prebuilt binary committed in the package tree: {}");
+        Finding::meta(
+            Severity::Critical,
+            "COMMITTED_BINARY",
+            i18n::fill(tpl, Some(&arg)),
+        )
+        .with_arg(arg)
+    }
+}
+
+/// Walk the package tree rooted at `dir`, returning every committed binary with
+/// its SHA-256.
+pub fn scan_tree(dir: &Path) -> Vec<Binary> {
+    let mut bins = Vec::new();
+    let mut budget = MAX_FILES;
+    walk(dir, dir, &mut budget, &mut bins);
+    bins
+}
+
+fn walk(root: &Path, dir: &Path, budget: &mut usize, out: &mut Vec<Binary>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -50,7 +83,7 @@ fn walk(root: &Path, dir: &Path, lang: Lang, budget: &mut usize, out: &mut Vec<F
             if SKIP_DIRS.contains(&name.as_ref()) {
                 continue;
             }
-            walk(root, &path, lang, budget, out);
+            walk(root, &path, budget, out);
             continue;
         }
         if !ft.is_file() {
@@ -59,17 +92,11 @@ fn walk(root: &Path, dir: &Path, lang: Lang, budget: &mut usize, out: &mut Vec<F
         *budget -= 1;
         if let Some(kind) = classify(&path, &name) {
             let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy();
-            let arg = format!("{rel} ({kind})");
-            let tpl = i18n::finding(lang, "COMMITTED_BINARY")
-                .unwrap_or("Prebuilt binary committed in the package tree: {}");
-            out.push(
-                Finding::meta(
-                    Severity::Critical,
-                    "COMMITTED_BINARY",
-                    i18n::fill(tpl, Some(&arg)),
-                )
-                .with_arg(arg),
-            );
+            out.push(Binary {
+                path: rel.into_owned(),
+                kind,
+                sha256: sha256_file(&path),
+            });
         }
     }
 }
@@ -111,6 +138,31 @@ fn magic(path: &Path) -> Option<&'static str> {
     }
 }
 
+/// Stream a file through SHA-256, returning lower-case hex. `None` on I/O error
+/// or when the file is implausibly large.
+fn sha256_file(path: &Path) -> Option<String> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).ok()?;
+    if f.metadata().map(|m| m.len()).unwrap_or(0) > MAX_HASH_BYTES {
+        return None;
+    }
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = f.read(&mut buf).ok()?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for b in digest {
+        hex.push_str(&format!("{b:02x}"));
+    }
+    Some(hex)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,15 +181,15 @@ mod tests {
     }
 
     #[test]
-    fn flags_elf_binary() {
+    fn flags_elf_binary_with_hash() {
         let d = tmpdir();
         let mut f = std::fs::File::create(d.join("helper")).unwrap();
         f.write_all(b"\x7fELF\x02\x01\x01\x00rest").unwrap();
-        let found = scan_tree(&d, Lang::En);
-        assert!(
-            found.iter().any(|x| x.code == "COMMITTED_BINARY"),
-            "{found:?}"
-        );
+        let bins = scan_tree(&d);
+        assert_eq!(bins.len(), 1, "{bins:?}");
+        assert_eq!(bins[0].kind, "ELF");
+        assert_eq!(bins[0].sha256.as_ref().unwrap().len(), 64);
+        assert_eq!(bins[0].finding(Lang::En).code, "COMMITTED_BINARY");
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -145,11 +197,7 @@ mod tests {
     fn flags_by_extension() {
         let d = tmpdir();
         std::fs::write(d.join("payload.so"), b"not really elf").unwrap();
-        let found = scan_tree(&d, Lang::En);
-        assert!(
-            found.iter().any(|x| x.code == "COMMITTED_BINARY"),
-            "{found:?}"
-        );
+        assert!(scan_tree(&d).iter().any(|b| b.kind == "binary"));
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -158,8 +206,7 @@ mod tests {
         let d = tmpdir();
         std::fs::write(d.join("PKGBUILD"), b"pkgname=x\nbuild() { :; }\n").unwrap();
         std::fs::write(d.join("x.patch"), b"--- a\n+++ b\n").unwrap();
-        let found = scan_tree(&d, Lang::En);
-        assert!(found.is_empty(), "{found:?}");
+        assert!(scan_tree(&d).is_empty());
         std::fs::remove_dir_all(&d).ok();
     }
 
@@ -168,10 +215,22 @@ mod tests {
         let d = tmpdir();
         let git = d.join(".git");
         std::fs::create_dir_all(&git).unwrap();
-        let mut f = std::fs::File::create(git.join("index")).unwrap();
-        f.write_all(b"\x7fELF").unwrap();
-        let found = scan_tree(&d, Lang::En);
-        assert!(found.is_empty(), "{found:?}");
+        std::fs::File::create(git.join("index"))
+            .unwrap()
+            .write_all(b"\x7fELF")
+            .unwrap();
+        assert!(scan_tree(&d).is_empty());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn hash_is_stable() {
+        let d = tmpdir();
+        std::fs::write(d.join("a.bin"), b"\x7fELFsame").unwrap();
+        let h1 = scan_tree(&d)[0].sha256.clone();
+        let h2 = scan_tree(&d)[0].sha256.clone();
+        assert_eq!(h1, h2);
+        assert!(h1.is_some());
         std::fs::remove_dir_all(&d).ok();
     }
 }

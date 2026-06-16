@@ -135,6 +135,7 @@ $ aurguard -S opencode
 | `--no-ioc`            | Disable the IOC blocklist + crypto-wallet pass                     |
 | `--no-taint`          | Disable the dataflow taint pass                                    |
 | `--no-delta`          | Disable version/maintainer delta tracking                         |
+| `--vt`                | Look committed-binary hashes up on the VirusTotal API (needs a key) |
 
 ### Examples
 
@@ -222,7 +223,9 @@ Analysis layers several passes over the build sources (the `PKGBUILD` **and** an
 8. **`pkgver()` & PGP** — flags network/`eval` inside `pkgver()` (makepkg runs
    it) and signature-bearing sources with no `validpgpkeys`.
 9. **Committed-binary scan** (`src/srcscan.rs`, `-S` only) — walks the cloned
-   tree for prebuilt ELF/PE/Mach-O/`.so`/`.pyc`/wasm artifacts.
+   tree for prebuilt ELF/PE/Mach-O/`.so`/`.pyc`/wasm artifacts, hashing each so
+   it can be checked on VirusTotal (`src/vt.rs`) — offline by hash+link, or via
+   the API with `--vt`.
 10. **Metadata, history & delta** — votes, maintainer age, staleness, `pkgrel`
     churn, change-tracking against your last approval, plus maintainer-change and
     version-bump-introduces-new-risk detection.
@@ -281,6 +284,18 @@ ruleset runs over the `PKGBUILD` and over root-privileged `.install` scripts.
 | `SYSTEMD_PERSIST`  | WARN       | enabling/starting a systemd service from the build           |
 | `INSECURE_FETCH`   | WARN       | `curl -k` / `wget --no-check-certificate` (TLS off)          |
 | `PIP_INDEX_HIJACK` | WARN       | `pip install --index-url` pointing at a non-default index    |
+| `LD_PRELOAD_HIJACK`| CRITICAL   | writing `/etc/ld.so.preload` (userland rootkit)              |
+| `SHELL_RC_PERSIST` | CRITICAL   | appending to `.bashrc`/`.zshrc`/`/etc/profile.d/` for persistence |
+| `CLOUD_METADATA`   | CRITICAL   | hitting `169.254.169.254` / cloud instance-metadata (SSRF)   |
+| `DOCKER_SOCK`      | CRITICAL   | touching `/var/run/docker.sock` (container escape)           |
+| `GIT_HOOK_PERSIST` | CRITICAL   | writing into `.git/hooks/` (runs on git operations)          |
+| `SUDOERS_TAMPER`   | CRITICAL   | editing `/etc/sudoers` / `sudoers.d/` (privilege escalation) |
+| `CURL_FILE_UPLOAD` | CRITICAL   | `curl --data-binary @file` / `--upload-file` (off-host exfil)|
+| `PY_REVERSE_SHELL` | CRITICAL   | scripting-language reverse shell (`socket`+`/bin/sh`+`dup2`) |
+| `KERNEL_MODULE_LOAD`| WARN      | `insmod`/`modprobe` at build/install time                    |
+| `TOR_C2`           | WARN       | a `.onion` hidden-service reference (possible C2)            |
+| `AT_PERSIST`       | WARN       | scheduling a job via `at`/`batch`                            |
+| `DNS_EXFIL`        | WARN       | `dig`/`nslookup` fed command-substitution/base64 (DNS tunnel)|
 
 ### Deep analysis — anti-evasion & intelligence
 
@@ -302,6 +317,27 @@ default; the noisier heuristics are gated behind `--max`.
 | `PGP_KEYSERVER_FETCH` | WARN     | pgp    | imports a PGP key from a keyserver at build time (unpinned trust)  |
 | `MAINTAINER_CHANGED`| WARN       | delta  | the AUR maintainer changed since you approved the package          |
 | `DELTA_NEW_RISK`    | WARN/CRIT  | delta  | a version bump introduced a finding absent at approval time        |
+| `VT_HINT`           | INFO       | vt     | SHA-256 + a VirusTotal link to check a committed binary by hand    |
+| `VT_FLAGGED`        | CRITICAL   | vt     | the VirusTotal API reports the binary as malicious (`--vt`)        |
+
+### VirusTotal (committed binaries)
+
+Every prebuilt binary found in a `-S` clone is hashed (SHA-256). aurguard never
+uploads files; it uses the hash two ways:
+
+- **Offline (always):** a `VT_HINT` line prints the hash and a
+  `https://www.virustotal.com/gui/file/<hash>` link — paste it into VirusTotal
+  to check by hand. Nothing leaves your machine.
+- **API (opt-in `--vt`):** with a key in `[virustotal]` or the `AURGUARD_VT_KEY`
+  environment variable, aurguard looks each hash up via the VirusTotal v3 API. A
+  hash flagged by engines becomes `VT_FLAGGED` (CRITICAL). Looking a hash up
+  discloses it to a third party, so this path is never taken implicitly.
+
+```toml
+[virustotal]
+api_key = "…"     # or set AURGUARD_VT_KEY
+enabled = true     # query automatically (otherwise pass --vt)
+```
 
 ### WARN — review recommended
 
@@ -510,7 +546,7 @@ cargo build --release
 
 - `cargo fmt --check` — formatted
 - `cargo clippy -- -D warnings` — zero warnings
-- `cargo test` — 86 unit + 24 integration tests: every CRITICAL rule, the YARA-style signature database, the AST pass, the decode/normalize/IOC/taint/delta/pkgver/PGP/srcscan deep passes, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
+- `cargo test` — 89 unit + 24 integration tests: every CRITICAL rule, the 24-rule YARA-style signature database, the AST pass, the decode/normalize/IOC/taint/delta/pkgver/PGP/srcscan/VirusTotal deep passes, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
 - No raw `unwrap()` in non-test code — all errors flow through `anyhow`
 - Release profile tuned for size: `opt-level = "z"`, `lto`, `strip = true`
 
