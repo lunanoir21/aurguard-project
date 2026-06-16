@@ -58,6 +58,30 @@ impl Binary {
     }
 }
 
+/// Flag any committed binary whose SHA-256 appears in the user's `[ioc].hashes`
+/// blocklist as an `IOC_MATCH` (Critical) — a local, no-API known-bad check.
+pub fn match_known_bad(bins: &[Binary], hashes: &[String], lang: Lang) -> Vec<Finding> {
+    if hashes.is_empty() {
+        return Vec::new();
+    }
+    let blocked: std::collections::HashSet<String> = hashes
+        .iter()
+        .map(|h| h.trim().to_ascii_lowercase())
+        .collect();
+    bins.iter()
+        .filter_map(|b| {
+            let h = b.sha256.as_ref()?;
+            blocked.contains(h).then(|| {
+                let arg = format!("{} sha256:{h}", b.path);
+                let tpl =
+                    i18n::finding(lang, "IOC_MATCH").unwrap_or("Matches a known-bad indicator: {}");
+                Finding::meta(Severity::Critical, "IOC_MATCH", i18n::fill(tpl, Some(&arg)))
+                    .with_arg(arg)
+            })
+        })
+        .collect()
+}
+
 /// Walk the package tree rooted at `dir`, returning every committed binary with
 /// its SHA-256.
 pub fn scan_tree(dir: &Path) -> Vec<Binary> {

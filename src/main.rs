@@ -431,6 +431,12 @@ async fn sync_one(
     // attach offline VirusTotal hints, and — when opted in — query the VT API.
     let bins = add_srcscan(&mut report, repo.path(), config.ui.lang);
     if !bins.is_empty() {
+        // Local known-bad hash check against the user's [ioc].hashes blocklist.
+        report.findings.extend(srcscan::match_known_bad(
+            &bins,
+            &config.ioc.hashes,
+            config.ui.lang,
+        ));
         if cli.vt || config.virustotal.enabled {
             match config.virustotal.key() {
                 Some(key) => {

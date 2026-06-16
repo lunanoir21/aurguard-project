@@ -68,6 +68,42 @@ pub fn rule_count() -> usize {
     RULES.len()
 }
 
+/// Evaluate user-defined [`crate::config::CustomRule`]s against one lower-cased line. A custom
+/// match is reported under the stable `CUSTOM_RULE` code with the user's own
+/// code and message in the text (so runtime codes need no `'static` lifetime).
+pub fn scan_custom(
+    lower: &str,
+    lineno: usize,
+    rules: &[crate::config::CustomRule],
+    findings: &mut Vec<Finding>,
+) {
+    for r in rules {
+        if r.contains.is_empty() {
+            continue;
+        }
+        if r.not
+            .iter()
+            .any(|n| lower.contains(&n.to_ascii_lowercase()))
+        {
+            continue;
+        }
+        if r.contains
+            .iter()
+            .all(|c| lower.contains(&c.to_ascii_lowercase()))
+        {
+            findings.push(
+                Finding::at(
+                    r.severity(),
+                    "CUSTOM_RULE",
+                    format!("{}: {}", r.code, r.message()),
+                    lineno,
+                )
+                .with_arg(r.code.clone()),
+            );
+        }
+    }
+}
+
 use Severity::{Critical, Warn};
 
 /// The built-in signature database.

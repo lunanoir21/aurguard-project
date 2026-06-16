@@ -29,6 +29,9 @@ const ENTROPY_HI: f64 = 4.3;
 /// Minimum length before entropy is even considered.
 const ENTROPY_MIN_LEN: usize = 40;
 
+/// Maximum nested-decode depth (base64-of-base64-of-…), to bound recursion.
+const MAX_DEPTH: u8 = 4;
+
 /// Run the decode pass over `text`. `max` enables the noisier `ENCODED_BLOB`
 /// and `HIGH_ENTROPY_BLOB` signals.
 pub fn scan(text: &str, max: bool, findings: &mut Vec<Finding>) {
@@ -37,41 +40,55 @@ pub fn scan(text: &str, max: bool, findings: &mut Vec<Finding>) {
     }
 }
 
-/// Decode every candidate blob on one line and rescan the result.
+/// Decode every candidate blob on one line (recursing through nested layers),
+/// then also re-scan the line under reversible text transforms (rot13, reverse,
+/// URL-decode) that hide a plaintext command.
 fn scan_line(raw: &str, lineno: usize, max: bool, findings: &mut Vec<Finding>) {
+    let mut flagged = false;
     for tok in candidates(raw) {
-        let decoded = try_decode(tok);
-        if let Some(text) = &decoded {
-            let lower = text.to_ascii_lowercase();
-            let mut inner = Vec::new();
-            rules::scan_line(&lower, lineno, &mut inner);
-            if let Some(hit) = inner.first() {
-                findings.push(
-                    Finding::at(
-                        Severity::Critical,
-                        "DECODED_THREAT",
-                        format!(
-                            "Encoded payload decodes to a known-bad pattern ({})",
-                            hit.code
-                        ),
-                        lineno,
-                    )
-                    .with_arg(hit.code.to_string()),
-                );
-                continue;
-            }
-            if max && looks_executable(&lower) {
-                findings.push(Finding::at(
-                    Severity::Warn,
-                    "ENCODED_BLOB",
-                    "Encoded blob decodes to shell-like content",
-                    lineno,
-                ));
-                continue;
+        flagged |= analyze_blob(tok, 0, max, lineno, findings);
+    }
+
+    // Text-layer obfuscation: a command hidden behind rot13 / reversal / URL
+    // escaping. Only fire when the transform reveals a rule that the raw line
+    // did not already trip (so we are not double-reporting plain text).
+    if !flagged {
+        let lower_raw = raw.to_ascii_lowercase();
+        if first_rule_hit(&lower_raw).is_none() {
+            for (kind, transformed) in text_transforms(raw) {
+                if let Some(code) = first_rule_hit(&transformed.to_ascii_lowercase()) {
+                    findings.push(
+                        Finding::at(
+                            Severity::Critical,
+                            "DECODED_THREAT",
+                            format!("{kind}-obfuscated payload decodes to {code}"),
+                            lineno,
+                        )
+                        .with_arg(code.to_string()),
+                    );
+                    break;
+                }
             }
         }
-        // Entropy only when the blob did not already decode to a threat.
-        if max && decoded.is_none() {
+    }
+}
+
+/// Decode one candidate blob and, recursively, any blob nested inside the
+/// decoded text. Returns whether anything was flagged for this blob.
+fn analyze_blob(
+    tok: &str,
+    depth: u8,
+    max: bool,
+    lineno: usize,
+    findings: &mut Vec<Finding>,
+) -> bool {
+    if depth >= MAX_DEPTH {
+        return false;
+    }
+    let Some(bytes) = try_decode_bytes(tok) else {
+        // Not decodable: at the top level, a long high-entropy token is a packed
+        // payload under `--max`.
+        if depth == 0 && max {
             if let Some(ent) = high_entropy(tok) {
                 findings.push(
                     Finding::at(
@@ -82,8 +99,137 @@ fn scan_line(raw: &str, lineno: usize, max: bool, findings: &mut Vec<Finding>) {
                     )
                     .with_arg(format!("{ent:.1}")),
                 );
+                return true;
             }
         }
+        return false;
+    };
+
+    // A blob that decodes to compressed/executable bytes is a packed payload.
+    if let Some(magic) = container_magic(&bytes) {
+        findings.push(
+            Finding::at(
+                Severity::Critical,
+                "COMPRESSED_PAYLOAD",
+                format!("Encoded blob unwraps to a {magic} payload"),
+                lineno,
+            )
+            .with_arg(magic.to_string()),
+        );
+        return true;
+    }
+
+    let Some(text) = printable(bytes) else {
+        return false;
+    };
+    let lower = text.to_ascii_lowercase();
+
+    if let Some(code) = first_rule_hit(&lower) {
+        findings.push(
+            Finding::at(
+                Severity::Critical,
+                "DECODED_THREAT",
+                format!("Encoded payload decodes to a known-bad pattern ({code})"),
+                lineno,
+            )
+            .with_arg(code.to_string()),
+        );
+        return true;
+    }
+
+    // Recurse into anything that looks like a further-encoded layer.
+    let mut nested = false;
+    for inner in candidates(&text) {
+        nested |= analyze_blob(inner, depth + 1, max, lineno, findings);
+    }
+    if nested {
+        return true;
+    }
+
+    if max && depth == 0 && looks_executable(&lower) {
+        findings.push(Finding::at(
+            Severity::Warn,
+            "ENCODED_BLOB",
+            "Encoded blob decodes to shell-like content",
+            lineno,
+        ));
+        return true;
+    }
+    false
+}
+
+/// First signature-rule code matched on a lower-cased line, if any.
+fn first_rule_hit(lower: &str) -> Option<&'static str> {
+    let mut hits = Vec::new();
+    rules::scan_line(lower, 0, &mut hits);
+    hits.first().map(|f| f.code)
+}
+
+/// Reversible text transforms that hide a plaintext command: rot13, full
+/// reversal (`… | rev`), and URL percent-decoding.
+fn text_transforms(line: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("rot13", rot13(line)),
+        ("reversed", line.chars().rev().collect()),
+        ("url-decoded", url_decode(line)),
+    ]
+}
+
+/// Apply the ROT13 substitution to ASCII letters.
+fn rot13(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            'a'..='z' => (((c as u8 - b'a' + 13) % 26) + b'a') as char,
+            'A'..='Z' => (((c as u8 - b'A' + 13) % 26) + b'A') as char,
+            _ => c,
+        })
+        .collect()
+}
+
+/// Decode `%XX` percent-escapes; leaves malformed escapes untouched.
+fn url_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (
+                (b[i + 1] as char).to_digit(16),
+                (b[i + 2] as char).to_digit(16),
+            ) {
+                out.push((h * 16 + l) as u8 as char);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i] as char);
+        i += 1;
+    }
+    out
+}
+
+/// Recognize compression / executable container magic at the head of decoded
+/// bytes — a base64 blob that unwraps to one of these is a packed payload.
+fn container_magic(b: &[u8]) -> Option<&'static str> {
+    if b.starts_with(&[0x1f, 0x8b]) {
+        Some("gzip")
+    } else if b.starts_with(&[0xfd, b'7', b'z', b'X', b'Z', 0x00]) {
+        Some("xz")
+    } else if b.starts_with(b"BZh") {
+        Some("bzip2")
+    } else if b.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        Some("zstd")
+    } else if b.starts_with(b"\x7fELF") {
+        Some("ELF executable")
+    } else if b.starts_with(&[0x78, 0x01])
+        || b.starts_with(&[0x78, 0x9c])
+        || b.starts_with(&[0x78, 0xda])
+    {
+        Some("zlib")
+    } else if b.starts_with(b"PK\x03\x04") {
+        Some("zip")
+    } else {
+        None
     }
 }
 
@@ -125,22 +271,16 @@ fn is_hex(s: &str) -> bool {
     s.len() % 2 == 0 && !s.is_empty() && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Try base64 (standard + URL-safe) then hex, accepting only results that are
-/// valid UTF-8 and mostly printable.
-fn try_decode(tok: &str) -> Option<String> {
-    if let Some(bytes) = b64_decode(tok) {
-        if let Some(s) = printable(bytes) {
-            return Some(s);
-        }
-    }
+/// Decode a candidate as base64 (standard + URL-safe) or hex, returning the raw
+/// bytes. The caller decides whether the bytes are printable text or a binary
+/// container.
+fn try_decode_bytes(tok: &str) -> Option<Vec<u8>> {
     if is_hex(tok) {
         if let Some(bytes) = hex_decode(tok) {
-            if let Some(s) = printable(bytes) {
-                return Some(s);
-            }
+            return Some(bytes);
         }
     }
-    None
+    b64_decode(tok).filter(|b| !b.is_empty())
 }
 
 /// Accept decoded bytes only if valid UTF-8 with few control characters, so we
@@ -307,5 +447,72 @@ mod tests {
     #[test]
     fn short_tokens_ignored() {
         assert!(candidates("x=abc123 y=foobar").is_empty());
+    }
+
+    #[test]
+    fn nested_base64_is_caught() {
+        // base64(base64("… xmrig …")) — two layers deep.
+        let inner = b64("run xmrig --donate-level 1 against minexmr now");
+        let outer = b64(&inner);
+        let mut f = Vec::new();
+        scan(&outer, false, &mut f);
+        assert!(f.iter().any(|x| x.code == "DECODED_THREAT"), "{f:?}");
+    }
+
+    #[test]
+    fn base64_wrapped_gzip_is_packed_payload() {
+        // base64 of gzip magic bytes (1f 8b 08 …) → COMPRESSED_PAYLOAD.
+        let gz = [
+            0x1f, 0x8b, 0x08, 0x00, 0x11, 0x22, 0x33, 0x44, 0x00, 0x03, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff, 0x01, 0x02, 0x03, 0x04,
+        ];
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut payload = String::new();
+        for chunk in gz.chunks(3) {
+            let b = [
+                chunk[0],
+                *chunk.get(1).unwrap_or(&0),
+                *chunk.get(2).unwrap_or(&0),
+            ];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            payload.push(A[((n >> 18) & 63) as usize] as char);
+            payload.push(A[((n >> 12) & 63) as usize] as char);
+            payload.push(if chunk.len() > 1 {
+                A[((n >> 6) & 63) as usize] as char
+            } else {
+                '='
+            });
+            payload.push(if chunk.len() > 2 {
+                A[(n & 63) as usize] as char
+            } else {
+                '='
+            });
+        }
+        let mut f = Vec::new();
+        scan(
+            &format!("echo {payload} | base64 -d | gunzip | sh"),
+            false,
+            &mut f,
+        );
+        assert!(f.iter().any(|x| x.code == "COMPRESSED_PAYLOAD"), "{f:?}");
+    }
+
+    #[test]
+    fn rot13_obfuscated_command_is_revealed() {
+        // rot13("xmrig --donate-level minexmr stratum") hides the miner.
+        let hidden = rot13("xmrig --donate-level minexmr stratum pool");
+        let mut f = Vec::new();
+        scan(
+            &format!("echo '{hidden}' | tr a-z n-za-m | sh"),
+            false,
+            &mut f,
+        );
+        assert!(f.iter().any(|x| x.code == "DECODED_THREAT"), "{f:?}");
+    }
+
+    #[test]
+    fn url_encoded_helpers() {
+        assert_eq!(url_decode("rm%20-rf%20%2f"), "rm -rf /");
+        assert_eq!(rot13("nopqr"), "abcde");
     }
 }

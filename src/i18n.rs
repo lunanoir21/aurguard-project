@@ -725,6 +725,13 @@ pub fn finding(lang: Lang, code: &str) -> Option<&'static str> {
             Es => "La carga codificada se decodifica en un patrón malicioso conocido ({})",
             Az => "Kodlanmış yük məlum zərərli nümunəyə açılır ({})",
         },
+        "COMPRESSED_PAYLOAD" => match lang {
+            En => "Encoded blob unwraps to a {} payload",
+            Tr => "Kodlanmış blok bir {} yüküne açılıyor",
+            Fr => "Le blob encodé se déballe en une charge {}",
+            Es => "El blob codificado se desempaqueta en una carga {}",
+            Az => "Kodlanmış blok {} yükünə açılır",
+        },
         "ENCODED_BLOB" => match lang {
             En => "Encoded blob decodes to shell-like content",
             Tr => "Kodlanmış blok kabuk benzeri içeriğe çözülüyor",
@@ -927,6 +934,20 @@ pub fn finding(lang: Lang, code: &str) -> Option<&'static str> {
             Fr => "VirusTotal n'a aucune trace de ce binaire ({})",
             Es => "VirusTotal no tiene registro de este binario ({})",
             Az => "VirusTotal-da bu ikili fayl haqqında qeyd yoxdur ({})",
+        },
+        "ORPHAN_PACKAGE" => match lang {
+            En => "Package is orphaned (no maintainer)",
+            Tr => "Paket sahipsiz (bakımcısı yok)",
+            Fr => "Le paquet est orphelin (aucun mainteneur)",
+            Es => "El paquete está huérfano (sin responsable)",
+            Az => "Paket sahibsizdir (məsul şəxs yoxdur)",
+        },
+        "FLAGGED_OUTDATED" => match lang {
+            En => "Flagged out-of-date ({})",
+            Tr => "Güncel değil olarak işaretlenmiş ({})",
+            Fr => "Signalé comme obsolète ({})",
+            Es => "Marcado como desactualizado ({})",
+            Az => "Köhnəlmiş kimi işarələnib ({})",
         },
         "VT_ERROR" => match lang {
             En => "VirusTotal lookup failed ({})",

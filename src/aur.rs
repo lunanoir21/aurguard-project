@@ -34,6 +34,9 @@ pub struct PackageInfo {
     pub last_modified: i64,
     /// Community vote count.
     pub num_votes: u64,
+    /// Unix timestamp when the package was flagged out-of-date, if it is.
+    #[serde(default)]
+    pub out_of_date: Option<i64>,
     /// Path suffix for the git repo / snapshot (`URLPath`). Parsed for
     /// completeness; not yet surfaced in the report.
     #[serde(rename = "URLPath")]

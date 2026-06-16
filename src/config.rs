@@ -19,7 +19,7 @@
 //! ```
 
 use crate::i18n::Lang;
-use crate::report::Risk;
+use crate::report::{Risk, Severity};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::path::PathBuf;
@@ -38,6 +38,87 @@ pub struct Config {
     pub policy: Policy,
     /// VirusTotal integration.
     pub virustotal: VirusTotal,
+    /// User-defined signature rules.
+    pub signatures: Signatures,
+    /// User-defined indicators of compromise.
+    pub ioc: Ioc,
+}
+
+/// `[signatures]` section: site-local rules layered on top of the built-in
+/// database without recompiling.
+///
+/// ```toml
+/// [[signatures.custom]]
+/// code = "INTERNAL_MIRROR"
+/// severity = "warn"            # critical | warn | info
+/// message = "Fetches from a retired internal mirror"
+/// contains = ["old-mirror.corp", "curl"]   # all must be present
+/// not = ["$pkgdir"]                          # any vetoes the match
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Signatures {
+    /// Custom rules evaluated alongside the built-in signature database.
+    pub custom: Vec<CustomRule>,
+}
+
+/// One user-defined signature rule (single-clause AND over substrings).
+#[derive(Debug, Clone, Deserialize)]
+pub struct CustomRule {
+    /// Stable finding code shown in the report.
+    pub code: String,
+    /// `critical` | `warn` | `info`; defaults to `warn`.
+    #[serde(default)]
+    pub severity: Option<String>,
+    /// Human-readable message (defaults to the code).
+    #[serde(default)]
+    pub message: Option<String>,
+    /// Every substring here must be present (case-insensitive) to match.
+    #[serde(default)]
+    pub contains: Vec<String>,
+    /// If any of these substrings is present, the rule does not fire.
+    #[serde(default)]
+    pub not: Vec<String>,
+}
+
+impl CustomRule {
+    /// Parsed severity, defaulting to `Warn`.
+    pub fn severity(&self) -> Severity {
+        match self
+            .severity
+            .as_deref()
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("critical") => Severity::Critical,
+            Some("info") => Severity::Info,
+            _ => Severity::Warn,
+        }
+    }
+
+    /// The display message, falling back to the code.
+    pub fn message(&self) -> &str {
+        match &self.message {
+            Some(m) if !m.is_empty() => m,
+            _ => &self.code,
+        }
+    }
+}
+
+/// `[ioc]` section: extra known-bad indicators.
+///
+/// ```toml
+/// [ioc]
+/// hosts  = ["c2.evil.example", "1.2.3.4"]
+/// hashes = ["<sha256 of a known-bad binary>"]
+/// ```
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct Ioc {
+    /// Extra known-bad host/IP substrings, matched against the script text.
+    pub hosts: Vec<String>,
+    /// Known-bad SHA-256 hashes, matched against committed binaries.
+    pub hashes: Vec<String>,
 }
 
 /// `[virustotal]` section.

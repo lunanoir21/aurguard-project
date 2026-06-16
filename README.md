@@ -209,17 +209,22 @@ Analysis layers several passes over the build sources (the `PKGBUILD` **and** an
    malware signatures: crypto miners, Discord/Telegram exfiltration, credential
    harvesting, SSH/cron persistence, and defense-evasion, with `not`-string
    vetoes to stay quiet on legitimate `$pkgdir` packaging.
-4. **Decode-and-rescan** (`src/decode.rs`) — base64/hex blobs are decoded and
-   the signature engine re-runs over the *decoded* bytes, catching payloads that
-   are not present as plain text. `--max` adds entropy / encoded-blob heuristics.
+4. **Decode-and-rescan** (`src/decode.rs`) — base64/hex blobs are decoded
+   **recursively** (base64-of-base64-of-…, depth-limited) and the signature
+   engine re-runs over each layer. Also re-scans the line under rot13, full
+   reversal (`… | rev`), and URL percent-decoding, and flags a blob that unwraps
+   to a compression/ELF container (`COMPRESSED_PAYLOAD`). `--max` adds entropy /
+   encoded-blob heuristics.
 5. **Normalize / constant-fold** (`src/normalize.rs`) — folds away quote-splitting
    (`xmr""ig`), `${IFS}` word-splitting, and `$'\x65val'` byte escapes, then
    rescans; surfaces the real finding plus `EVASION_NORMALIZED`.
 6. **IOC + wallet** (`src/ioc.rs`) — known-bad indicators (historic C2/drop
    hosts) and hardcoded BTC/ETH/XMR wallet addresses.
-7. **Dataflow taint** (`src/taint.rs`) — connects untrusted input
-   (`x="$(curl …)"`) to a later execution sink (`eval "$x"`), defeating the
-   split-across-lines trick that dodges single-line rules.
+7. **Dataflow taint** (`src/taint.rs`) — connects untrusted input to a later
+   execution sink, defeating the split-across-lines trick. Tracks tainted
+   *variables* (`x="$(curl …)"` → `eval "$x"`) **and** tainted *files*
+   (`curl -o f …` → `bash f`, or `cmd=$(cat f); eval "$cmd"`); sinks include
+   `eval`, `sh -c`, here-strings (`<<<`), `source`, and pipes into a shell.
 8. **`pkgver()` & PGP** — flags network/`eval` inside `pkgver()` (makepkg runs
    it) and signature-bearing sources with no `validpgpkeys`.
 9. **Committed-binary scan** (`src/srcscan.rs`, `-S` only) — walks the cloned
@@ -304,12 +309,14 @@ default; the noisier heuristics are gated behind `--max`.
 
 | Code                | Severity   | Pass   | What it detects                                                     |
 | ------------------- | ---------- | ------ | ------------------------------------------------------------------ |
-| `DECODED_THREAT`    | CRITICAL   | decode | a base64/hex blob that **decodes** to a known-bad signature        |
+| `DECODED_THREAT`    | CRITICAL   | decode | a base64/hex blob (recursively, through nested layers) — or a rot13/reversed/URL-encoded string — that decodes to a known-bad signature |
+| `COMPRESSED_PAYLOAD`| CRITICAL   | decode | a base64 blob that unwraps to gzip/xz/zstd/zlib/zip or an ELF executable |
 | `ENCODED_BLOB`      | WARN `--max` | decode | a blob that decodes to shell-like content (no specific rule hit) |
 | `HIGH_ENTROPY_BLOB` | WARN `--max` | decode | a long, high-entropy token that looks packed/encrypted           |
 | `IOC_MATCH`         | CRITICAL   | ioc    | a known-bad indicator (historic C2 / drop host)                    |
 | `WALLET_ADDRESS`    | WARN       | ioc    | a hardcoded BTC / ETH / XMR wallet address                         |
-| `TAINTED_EXEC`      | CRITICAL   | taint  | untrusted input (`$(curl …)`) reaching an `eval`/`sh -c` sink      |
+| `TAINTED_EXEC`      | CRITICAL   | taint  | untrusted input (a captured `$(curl …)` **or** a downloaded file) reaching an `eval`/`sh -c`/`<<<`/source sink |
+| `CUSTOM_RULE`       | user-set   | rules  | a user-defined `[signatures]` rule matched (severity set in config)|
 | `EVASION_NORMALIZED`| WARN       | normalize | obfuscation revealed after constant-folding (`xmr""ig`, `${IFS}`) |
 | `PKGVER_EXEC`       | CRITICAL   | pkgver | `pkgver()` runs network/`eval` at build time (makepkg executes it) |
 | `COMMITTED_BINARY`  | CRITICAL   | srcscan | a prebuilt executable committed in the package tree (`-S` only)   |
@@ -352,6 +359,8 @@ enabled = true     # query automatically (otherwise pass --vt)
 | `PKGBUILD_CHANGED` | content differs from your last approval                  | Surfaces silent upstream edits even with no other hit |
 | `NEW_MAINTAINER`   | maintainer/package age < 6 months                        | Low track record (from `first_submitted`)             |
 | `LOW_VOTES`        | `num_votes` < 5                                          | Low community trust                                   |
+| `ORPHAN_PACKAGE`   | the package has no maintainer                            | Orphaned — nobody is accountable for what ships       |
+| `FLAGGED_OUTDATED` | the AUR community flagged it out-of-date                 | Stale recipe; a softer target for a takeover          |
 | `URL_SHORTENER`    | a source behind `bit.ly`/`tinyurl`/…                     | Hides the real download host                          |
 | `HOME_PERSIST`     | writes to `.bashrc`, `.ssh/authorized_keys`, crontab, autostart | User-level persistence mechanism              |
 | `ANTI_FORENSIC`    | `history -c`, `chattr +i`, shredding logs                | Covers tracks after running                           |
@@ -424,6 +433,28 @@ ignore = ["VCS_SOURCE", "STALE"]
 # Risk that blocks a non-interactive (--skip-confirm) install.
 # One of: clean | risky | critical
 fail_on = "critical"
+
+[virustotal]
+# Look committed-binary hashes up on the VT API (opt-in). Without a key,
+# only the offline hash + link is shown. AURGUARD_VT_KEY overrides api_key.
+api_key = "…"
+enabled = false
+
+# Site-local signature rules, layered on the 24 built-ins without recompiling.
+# Every string in `contains` must be present (case-insensitive); any string in
+# `not` vetoes the match.
+[[signatures.custom]]
+code = "INTERNAL_MIRROR"
+severity = "warn"            # critical | warn | info
+message = "Fetches from a retired internal mirror"
+contains = ["old-mirror.corp", "curl"]
+not = ["$pkgdir"]
+
+[ioc]
+# Extra known-bad host/IP substrings, and known-bad SHA-256 hashes matched
+# against committed binaries (a local, no-API VirusTotal-style check).
+hosts  = ["c2.evil.example", "1.2.3.4"]
+hashes = ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
 ```
 
 You can also silence a single finding inline in a `PKGBUILD`:
@@ -546,7 +577,7 @@ cargo build --release
 
 - `cargo fmt --check` — formatted
 - `cargo clippy -- -D warnings` — zero warnings
-- `cargo test` — 89 unit + 24 integration tests: every CRITICAL rule, the 24-rule YARA-style signature database, the AST pass, the decode/normalize/IOC/taint/delta/pkgver/PGP/srcscan/VirusTotal deep passes, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
+- `cargo test` — 101 unit + 26 integration tests: every CRITICAL rule, the 24-rule YARA-style signature database, custom config rules, the AST pass, the recursive decode / normalize / IOC / file-and-variable taint / delta / pkgver / PGP / srcscan / VirusTotal deep passes, metadata signals, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
 - No raw `unwrap()` in non-test code — all errors flow through `anyhow`
 - Release profile tuned for size: `opt-level = "z"`, `lto`, `strip = true`
 

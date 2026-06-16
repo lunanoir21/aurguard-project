@@ -148,8 +148,8 @@ pub fn analyze_with(
     let host_sources = extract_sources(text, config);
 
     scan_script(text, &host_sources, config, &mut findings);
-    scan_deep(text, opts, &mut findings);
-    scan_install_scripts(&sources.install_scripts, opts, &mut findings);
+    scan_deep(text, opts, config, &mut findings);
+    scan_install_scripts(&sources.install_scripts, opts, config, &mut findings);
     if let Some(m) = meta {
         scan_metadata(m, now, lang, &mut findings);
     }
@@ -530,8 +530,10 @@ fn scan_script(text: &str, sources: &[SourceHost], config: &Config, findings: &m
         // High-signal dangerous-command patterns.
         scan_dangerous_line(&lower, &line, lineno, findings);
 
-        // YARA-style signature database (miners, exfil, persistence, …).
+        // YARA-style signature database (miners, exfil, persistence, …) plus any
+        // user-defined `[signatures]` rules.
         crate::rules::scan_line(&lower, lineno, findings);
+        crate::rules::scan_custom(&lower, lineno, &config.signatures.custom, findings);
     }
 
     // install() function or install= directive present.
@@ -906,7 +908,7 @@ fn textual_exec_fallback(text: &str, findings: &mut Vec<Finding>) {
 /// Scan each `.install` script (root-privileged hooks) with the AST pass.
 /// Tier 1/2 deep passes gated by [`ScanOpts`]. `--max` turns on the noisier
 /// heuristics inside [`decode`]; the precise passes run by default.
-fn scan_deep(text: &str, opts: ScanOpts, findings: &mut Vec<Finding>) {
+fn scan_deep(text: &str, opts: ScanOpts, config: &Config, findings: &mut Vec<Finding>) {
     if opts.decode {
         decode::scan(text, opts.max, findings);
     }
@@ -914,7 +916,7 @@ fn scan_deep(text: &str, opts: ScanOpts, findings: &mut Vec<Finding>) {
         crate::normalize::scan(text, findings);
     }
     if opts.ioc {
-        ioc::scan(text, findings);
+        ioc::scan(text, &config.ioc.hosts, findings);
     }
     if opts.taint {
         taint::scan(text, findings);
@@ -934,7 +936,12 @@ fn scan_deep(text: &str, opts: ScanOpts, findings: &mut Vec<Finding>) {
     }
 }
 
-fn scan_install_scripts(scripts: &[(String, String)], opts: ScanOpts, findings: &mut Vec<Finding>) {
+fn scan_install_scripts(
+    scripts: &[(String, String)],
+    opts: ScanOpts,
+    config: &Config,
+    findings: &mut Vec<Finding>,
+) {
     for (name, body) in scripts {
         let sub = astscan::scan(body).unwrap_or_default();
         for f in sub {
@@ -952,6 +959,7 @@ fn scan_install_scripts(scripts: &[(String, String)], opts: ScanOpts, findings: 
                 verbose: false,
                 ..opts
             },
+            config,
             &mut deep,
         );
         for f in deep {
@@ -985,6 +993,7 @@ fn scan_install_scripts(scripts: &[(String, String)], opts: ScanOpts, findings: 
             }
             scan_dangerous_line(&lower, &line, lineno, findings);
             crate::rules::scan_line(&lower, lineno, findings);
+            crate::rules::scan_custom(&lower, lineno, &config.signatures.custom, findings);
         }
     }
 }
@@ -1026,6 +1035,31 @@ fn scan_metadata(pkg: &PackageInfo, now: DateTime<Utc>, lang: Lang, findings: &m
                 Finding::meta(Severity::Info, "STALE", format!("Last updated {age}")).with_arg(age),
             );
         }
+    }
+    // Orphaned: no maintainer means no one is accountable for what ships.
+    if pkg.maintainer.is_none() {
+        findings.push(Finding::meta(
+            Severity::Warn,
+            "ORPHAN_PACKAGE",
+            "Package is orphaned (no maintainer)",
+        ));
+    }
+    // Flagged out-of-date: the pinned sources may no longer match upstream, and
+    // a stale recipe is a softer target for a takeover.
+    if pkg.out_of_date.is_some() {
+        let since = pkg
+            .out_of_date
+            .and_then(|ts| DateTime::<Utc>::from_timestamp(ts, 0))
+            .map(|_| humanize_since(pkg.out_of_date.unwrap(), now, lang))
+            .unwrap_or_else(|| "—".into());
+        findings.push(
+            Finding::meta(
+                Severity::Warn,
+                "FLAGGED_OUTDATED",
+                format!("Flagged out-of-date ({since})"),
+            )
+            .with_arg(since),
+        );
     }
 }
 
@@ -1521,6 +1555,7 @@ mod tests {
             first_submitted: 1_200_000_000,
             last_modified: 1_700_000_000,
             num_votes: 100,
+            out_of_date: None,
             url_path: None,
         }
     }
@@ -1546,6 +1581,27 @@ mod tests {
     #[test]
     fn detects_eval() {
         assert!(codes("build() {\n  eval \"$payload\"\n}").contains(&"EVAL"));
+    }
+
+    #[test]
+    fn orphan_and_outdated_metadata() {
+        let mut m = pkg();
+        m.maintainer = None;
+        m.out_of_date = Some(1_690_000_000);
+        let mut findings = Vec::new();
+        scan_metadata(&m, now(), Lang::En, &mut findings);
+        let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+        assert!(codes.contains(&"ORPHAN_PACKAGE"), "{codes:?}");
+        assert!(codes.contains(&"FLAGGED_OUTDATED"), "{codes:?}");
+    }
+
+    #[test]
+    fn maintained_current_package_has_no_orphan_flag() {
+        let mut findings = Vec::new();
+        scan_metadata(&pkg(), now(), Lang::En, &mut findings);
+        let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+        assert!(!codes.contains(&"ORPHAN_PACKAGE"));
+        assert!(!codes.contains(&"FLAGGED_OUTDATED"));
     }
 
     #[test]

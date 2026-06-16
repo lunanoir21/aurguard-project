@@ -6,7 +6,7 @@
     <title>aurguard — AUR package security guard</title>
     <meta
       name="description"
-      content="aurguard analyzes AUR packages before you install them — clone-first, tree-sitter-bash AST, a YARA-style signature engine, five languages, zero telemetry."
+      content="aurguard analyzes AUR packages before you install them — clone-first, tree-sitter-bash AST, a 24-rule YARA-style engine, recursive decoding, dataflow taint, VirusTotal hash checks, five languages, zero telemetry."
     />
     <meta property="og:title" content="aurguard — analyze before you install" />
     <meta
@@ -358,6 +358,7 @@
       <div class="badges">
         <span class="badge">Platform <b>Arch / Linux</b></span>
         <span class="badge">Written in <b>Rust</b></span>
+        <span class="badge"><b>10</b> analysis passes</span>
         <span class="badge"><b>5</b> languages</span>
         <span class="badge"><b>0</b> telemetry</span>
         <span class="badge">MIT</span>
@@ -425,17 +426,51 @@
       <section id="features">
         <h2><span class="hash">#</span> What it checks</h2>
         <p class="lead">
-          Four analysis passes feed one report: the AST pass, textual heuristics, a
-          YARA-style signature database, and package metadata &amp; history.
+          Ten analysis passes feed one report: a tree-sitter-bash AST pass, textual
+          heuristics, a 24-rule YARA-style signature database, recursive decoding,
+          anti-evasion normalization, dataflow taint, IOC/wallet matching,
+          committed-binary + VirusTotal checks, PGP/<code>pkgver()</code> integrity,
+          and package metadata &amp; history.
         </p>
         <div class="grid">
           <div class="card">
             <span class="ico">🔎</span>
-            <h3>YARA-style signatures</h3>
+            <h3>24 YARA-style signatures</h3>
             <p>
               A dependency-free rule engine matches named malware shapes — miners,
-              exfiltration, persistence, defense-evasion — with vetoes that stay quiet
-              on legitimate <code>$pkgdir</code> packaging.
+              exfiltration, persistence, defense-evasion, container escape, cloud-metadata
+              SSRF, reverse shells — with vetoes that stay quiet on legitimate
+              <code>$pkgdir</code> packaging. Extend it with your own rules in config.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🧬</span>
+            <h3>Anti-evasion decoding</h3>
+            <p>
+              Recursively decodes nested base64/hex, folds <code>b""ash</code> /
+              <code>${IFS}</code> / <code>$'\x65'</code> tricks, reverses rot13 /
+              reversed / URL-encoded strings, and flags base64-wrapped gzip/ELF
+              payloads — then re-runs every signature over what it finds.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🩸</span>
+            <h3>Dataflow taint</h3>
+            <p>
+              Connects untrusted input to execution across lines: a captured
+              <code>$(curl …)</code> or a downloaded file reaching
+              <code>eval</code>, <code>sh -c</code>, a here-string, or
+              <code>source</code> — the split-fetch-then-run trick that single-line
+              rules miss.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🧪</span>
+            <h3>Committed binaries &amp; VirusTotal</h3>
+            <p>
+              Prebuilt executables checked into a package tree are flagged and
+              SHA-256-hashed. Check them on VirusTotal — offline by hash + link, or
+              via the API with <code>--vt</code>. Nothing is ever uploaded.
             </p>
           </div>
           <div class="card">
@@ -500,16 +535,35 @@
           <span class="chip crit">CRED_HARVEST</span>
           <span class="chip crit">SSH_KEY_INJECT</span>
           <span class="chip crit">CRON_PERSIST</span>
-          <span class="chip crit">SUID_BIT</span>
+          <span class="chip crit">DECODED_THREAT</span>
+          <span class="chip crit">COMPRESSED_PAYLOAD</span>
+          <span class="chip crit">TAINTED_EXEC</span>
+          <span class="chip crit">PKGVER_EXEC</span>
+          <span class="chip crit">COMMITTED_BINARY</span>
+          <span class="chip crit">IOC_MATCH</span>
+          <span class="chip crit">VT_FLAGGED</span>
+          <span class="chip crit">LD_PRELOAD_HIJACK</span>
+          <span class="chip crit">CLOUD_METADATA</span>
+          <span class="chip crit">DOCKER_SOCK</span>
+          <span class="chip crit">SUDOERS_TAMPER</span>
+          <span class="chip crit">PY_REVERSE_SHELL</span>
           <span class="chip crit">DESTRUCTIVE</span>
-          <span class="chip crit">SYSTEM_PATH_WRITE</span>
+          <span class="chip warn">EVASION_NORMALIZED</span>
+          <span class="chip warn">WALLET_ADDRESS</span>
+          <span class="chip warn">MISSING_PGP</span>
+          <span class="chip warn">MAINTAINER_CHANGED</span>
+          <span class="chip warn">DELTA_NEW_RISK</span>
+          <span class="chip warn">ORPHAN_PACKAGE</span>
+          <span class="chip warn">FLAGGED_OUTDATED</span>
           <span class="chip warn">UNKNOWN_SOURCE</span>
-          <span class="chip warn">CHECKSUM_SKIP</span>
-          <span class="chip warn">INSTALL_NETWORK</span>
-          <span class="chip warn">URL_SHORTENER</span>
-          <span class="chip warn">INSECURE_FETCH</span>
+          <span class="chip warn">TOR_C2</span>
           <span class="chip warn">PIP_INDEX_HIJACK</span>
         </div>
+        <p class="lead" style="margin-top: 14px">
+          …and more — 24 signature rules plus the heuristic, decode, taint, metadata,
+          and integrity passes. Add your own rules and IOC lists in
+          <code>config.toml</code>.
+        </p>
       </section>
 
       <section id="install">

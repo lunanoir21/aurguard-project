@@ -1,6 +1,6 @@
 {
   "name": "aurguard-linux-arm64",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Prebuilt aurguard binary for linux-arm64 (installed automatically by `aurguard`).",
   "license": "MIT",
   "os": [

