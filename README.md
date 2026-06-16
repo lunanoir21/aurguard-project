@@ -128,6 +128,12 @@ $ aurguard -S opencode
 | `--json`              | Emit the report as JSON instead of the panel (for scripting)       |
 | `--skip-confirm`      | Auto-accept unless findings meet the fail-on threshold             |
 | `--fail-on <sev>`     | Threshold that blocks `--skip-confirm`: `clean` \| `risky` \| `critical` |
+| `--max`               | Maximum scrutiny — adds the noisier entropy / encoded-blob heuristics |
+| `-v`, `--verbose`     | Include the deep-scan profile and informational findings           |
+| `--no-decode`         | Disable the decode-and-rescan pass (base64/hex payloads)           |
+| `--no-ioc`            | Disable the IOC blocklist + crypto-wallet pass                     |
+| `--no-taint`          | Disable the dataflow taint pass                                    |
+| `--no-delta`          | Disable version/maintainer delta tracking                         |
 
 ### Examples
 
@@ -188,7 +194,7 @@ All diagnostic output goes to **stderr**; only `makepkg`'s build output goes to 
 
 ### Static analysis
 
-Analysis layers four passes over the build sources (the `PKGBUILD` **and** any
+Analysis layers several passes over the build sources (the `PKGBUILD` **and** any
 `.install` scriptlets, which run as root on install):
 
 1. **AST pass** — the script is parsed with `tree-sitter-bash`. Because commands,
@@ -201,8 +207,17 @@ Analysis layers four passes over the build sources (the `PKGBUILD` **and** any
    malware signatures: crypto miners, Discord/Telegram exfiltration, credential
    harvesting, SSH/cron persistence, and defense-evasion, with `not`-string
    vetoes to stay quiet on legitimate `$pkgdir` packaging.
-4. **Metadata & history** — votes, maintainer age, staleness, `pkgrel` churn,
-   plus change-tracking against your last approval.
+4. **Decode-and-rescan** (`src/decode.rs`) — base64/hex blobs are decoded and
+   the signature engine re-runs over the *decoded* bytes, catching payloads that
+   are not present as plain text. `--max` adds entropy / encoded-blob heuristics.
+5. **IOC + wallet** (`src/ioc.rs`) — known-bad indicators (historic C2/drop
+   hosts) and hardcoded BTC/ETH/XMR wallet addresses.
+6. **Dataflow taint** (`src/taint.rs`) — connects untrusted input
+   (`x="$(curl …)"`) to a later execution sink (`eval "$x"`), defeating the
+   split-across-lines trick that dodges single-line rules.
+7. **Metadata, history & delta** — votes, maintainer age, staleness, `pkgrel`
+   churn, change-tracking against your last approval, plus maintainer-change and
+   version-bump-introduces-new-risk detection.
 
 Each match becomes a `Finding { severity, code, message, line }`. The package's
 overall risk is the highest severity among its findings. Findings can be
@@ -258,6 +273,22 @@ ruleset runs over the `PKGBUILD` and over root-privileged `.install` scripts.
 | `SYSTEMD_PERSIST`  | WARN       | enabling/starting a systemd service from the build           |
 | `INSECURE_FETCH`   | WARN       | `curl -k` / `wget --no-check-certificate` (TLS off)          |
 | `PIP_INDEX_HIJACK` | WARN       | `pip install --index-url` pointing at a non-default index    |
+
+### Deep analysis — anti-evasion & intelligence
+
+These passes target obfuscation and integrity. The high-precision ones run by
+default; the noisier heuristics are gated behind `--max`.
+
+| Code                | Severity   | Pass   | What it detects                                                     |
+| ------------------- | ---------- | ------ | ------------------------------------------------------------------ |
+| `DECODED_THREAT`    | CRITICAL   | decode | a base64/hex blob that **decodes** to a known-bad signature        |
+| `ENCODED_BLOB`      | WARN `--max` | decode | a blob that decodes to shell-like content (no specific rule hit) |
+| `HIGH_ENTROPY_BLOB` | WARN `--max` | decode | a long, high-entropy token that looks packed/encrypted           |
+| `IOC_MATCH`         | CRITICAL   | ioc    | a known-bad indicator (historic C2 / drop host)                    |
+| `WALLET_ADDRESS`    | WARN       | ioc    | a hardcoded BTC / ETH / XMR wallet address                         |
+| `TAINTED_EXEC`      | CRITICAL   | taint  | untrusted input (`$(curl …)`) reaching an `eval`/`sh -c` sink      |
+| `MAINTAINER_CHANGED`| WARN       | delta  | the AUR maintainer changed since you approved the package          |
+| `DELTA_NEW_RISK`    | WARN/CRIT  | delta  | a version bump introduced a finding absent at approval time        |
 
 ### WARN — review recommended
 
@@ -466,7 +497,7 @@ cargo build --release
 
 - `cargo fmt --check` — formatted
 - `cargo clippy -- -D warnings` — zero warnings
-- `cargo test` — 65 unit + 14 integration tests: every CRITICAL rule, the YARA-style signature database, the AST pass, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
+- `cargo test` — 78 unit + 20 integration tests: every CRITICAL rule, the YARA-style signature database, the AST pass, the decode/IOC/taint/delta deep passes, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
 - No raw `unwrap()` in non-test code — all errors flow through `anyhow`
 - Release profile tuned for size: `opt-level = "z"`, `lto`, `strip = true`
 

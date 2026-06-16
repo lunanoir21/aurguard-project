@@ -13,12 +13,25 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 /// One approval record.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The trailing fields are `#[serde(default)]` so stores written by older
+/// versions (digest + timestamp only) still load; they back the T2.3 delta and
+/// maintainer-change detection in [`crate::pkgbuild`].
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Approval {
     /// SHA-256 (hex) of the canonical analyzed content.
     pub digest: String,
     /// RFC3339 timestamp of the approval.
     pub approved_at: String,
+    /// Package version (`pkgver-pkgrel`) at approval time.
+    #[serde(default)]
+    pub version: Option<String>,
+    /// Maintainer username at approval time.
+    #[serde(default)]
+    pub maintainer: Option<String>,
+    /// Finding codes present when the package was approved.
+    #[serde(default)]
+    pub codes: Vec<String>,
 }
 
 /// The on-disk approvals store, keyed by package name.
@@ -76,13 +89,33 @@ impl Approvals {
         self.packages.get(package).map(|a| a.digest.as_str())
     }
 
+    /// Full prior approval record for `package`, if any.
+    pub fn approval(&self, package: &str) -> Option<&Approval> {
+        self.packages.get(package)
+    }
+
     /// Record (or update) an approval for `package` with `digest` and persist.
     pub fn approve(&mut self, package: &str, digest: String) -> Result<()> {
+        self.approve_full(package, digest, None, None, Vec::new())
+    }
+
+    /// Record an approval with full metadata for delta/maintainer tracking.
+    pub fn approve_full(
+        &mut self,
+        package: &str,
+        digest: String,
+        version: Option<String>,
+        maintainer: Option<String>,
+        codes: Vec<String>,
+    ) -> Result<()> {
         self.packages.insert(
             package.to_string(),
             Approval {
                 digest,
                 approved_at: chrono::Utc::now().to_rfc3339(),
+                version,
+                maintainer,
+                codes,
             },
         );
         self.save()

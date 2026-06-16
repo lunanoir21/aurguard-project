@@ -7,6 +7,9 @@
 //! - [`pkgbuild`] — static analysis of `PKGBUILD` + `.install` scripts.
 //! - [`astscan`] — tree-sitter-bash AST pass that hardens detection against
 //!   obfuscation and string/comment false positives.
+//! - [`decode`] — decode-and-rescan of base64/hex blobs + entropy.
+//! - [`ioc`] — known-bad indicator blocklist + crypto-wallet detection.
+//! - [`taint`] — dataflow taint from untrusted input to execution sinks.
 //! - [`report`] — findings, severities, and the aggregated [`report::Report`].
 //! - [`config`] — user configuration (trusted domains, rule ignores, policy).
 //! - [`diff`] — approved-PKGBUILD ledger for change tracking.
@@ -16,16 +19,19 @@
 pub mod astscan;
 pub mod aur;
 pub mod config;
+pub mod decode;
 pub mod diff;
 pub mod i18n;
 pub mod installer;
+pub mod ioc;
 pub mod pkgbuild;
 pub mod report;
 pub mod rules;
+pub mod taint;
 pub mod ui;
 pub mod wizard;
 
 pub use config::Config;
 pub use i18n::Lang;
-pub use pkgbuild::{analyze, PkgSources};
+pub use pkgbuild::{analyze, analyze_with, PkgSources, ScanOpts};
 pub use report::{Finding, Report, Risk, Severity};

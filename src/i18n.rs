@@ -718,6 +718,69 @@ pub fn finding(lang: Lang, code: &str) -> Option<&'static str> {
             Es => "Instala paquetes de Python desde un índice no predeterminado",
             Az => "Python paketlərini standart olmayan indeksdən quraşdırır",
         },
+        "DECODED_THREAT" => match lang {
+            En => "Encoded payload decodes to a known-bad pattern ({})",
+            Tr => "Kodlanmış yük bilinen zararlı bir desene çözülüyor ({})",
+            Fr => "La charge encodée se décode en un motif malveillant connu ({})",
+            Es => "La carga codificada se decodifica en un patrón malicioso conocido ({})",
+            Az => "Kodlanmış yük məlum zərərli nümunəyə açılır ({})",
+        },
+        "ENCODED_BLOB" => match lang {
+            En => "Encoded blob decodes to shell-like content",
+            Tr => "Kodlanmış blok kabuk benzeri içeriğe çözülüyor",
+            Fr => "Le blob encodé se décode en contenu de type shell",
+            Es => "El blob codificado se decodifica en contenido tipo shell",
+            Az => "Kodlanmış blok shell-bənzər məzmuna açılır",
+        },
+        "HIGH_ENTROPY_BLOB" => match lang {
+            En => "High-entropy blob ({}); possible packed payload",
+            Tr => "Yüksek entropili blok ({}); olası paketlenmiş yük",
+            Fr => "Blob à haute entropie ({}) ; charge potentiellement empaquetée",
+            Es => "Blob de alta entropía ({}); posible carga empaquetada",
+            Az => "Yüksək entropiyalı blok ({}); ehtimal paketlənmiş yük",
+        },
+        "IOC_MATCH" => match lang {
+            En => "Matches a known-bad indicator: {}",
+            Tr => "Bilinen zararlı bir göstergeyle eşleşiyor: {}",
+            Fr => "Correspond à un indicateur malveillant connu : {}",
+            Es => "Coincide con un indicador malicioso conocido: {}",
+            Az => "Məlum zərərli göstərici ilə uyğun gəlir: {}",
+        },
+        "WALLET_ADDRESS" => match lang {
+            En => "Hardcoded crypto wallet address ({})",
+            Tr => "Gömülü kripto cüzdan adresi ({})",
+            Fr => "Adresse de portefeuille crypto codée en dur ({})",
+            Es => "Dirección de billetera cripto incrustada ({})",
+            Az => "Sabit kodlanmış kripto cüzdan ünvanı ({})",
+        },
+        "TAINTED_EXEC" => match lang {
+            En => "Untrusted input in ${} reaches an execution sink",
+            Tr => "${} içindeki güvenilmeyen girdi bir çalıştırma noktasına ulaşıyor",
+            Fr => "Une entrée non fiable dans ${} atteint un point d'exécution",
+            Es => "Entrada no confiable en ${} llega a un punto de ejecución",
+            Az => "${} daxilindəki etibarsız giriş icra nöqtəsinə çatır",
+        },
+        "MAINTAINER_CHANGED" => match lang {
+            En => "Maintainer changed since approval: {}",
+            Tr => "Onaydan bu yana bakımcı değişti: {}",
+            Fr => "Le mainteneur a changé depuis l'approbation : {}",
+            Es => "El responsable cambió desde la aprobación: {}",
+            Az => "Təsdiqdən sonra məsul şəxs dəyişdi: {}",
+        },
+        "DELTA_NEW_RISK" => match lang {
+            En => "Version bump introduced new risk ({})",
+            Tr => "Sürüm yükseltmesi yeni risk getirdi ({})",
+            Fr => "La montée de version a introduit un nouveau risque ({})",
+            Es => "El cambio de versión introdujo un nuevo riesgo ({})",
+            Az => "Versiya yüksəlişi yeni risk gətirdi ({})",
+        },
+        "SCAN_PROFILE" => match lang {
+            En => "Deep scan profile — decode/ioc/taint/delta enabled ({})",
+            Tr => "Derin tarama profili — decode/ioc/taint/delta etkin ({})",
+            Fr => "Profil d'analyse approfondie — decode/ioc/taint/delta activés ({})",
+            Es => "Perfil de análisis profundo — decode/ioc/taint/delta activos ({})",
+            Az => "Dərin tarama profili — decode/ioc/taint/delta aktiv ({})",
+        },
         _ => return None,
     };
     Some(s)
@@ -754,6 +817,8 @@ pub fn help_text(lang: Lang) -> String {
                 "Output the report as JSON",
                 "Auto-accept unless the fail-on threshold is met",
                 "Block threshold: clean|risky|critical",
+                "Maximum scrutiny: every deep pass at full sensitivity",
+                "Verbose output (deep-scan profile + info findings)",
                 "Print help",
                 "Print version",
             ],
@@ -776,6 +841,8 @@ pub fn help_text(lang: Lang) -> String {
                 "Raporu JSON olarak ver",
                 "Eşik aşılmadıkça otomatik kabul et",
                 "Engelleme eşiği: clean|risky|critical",
+                "En yüksek tarama: tüm derin geçişler tam duyarlılıkta",
+                "Ayrıntılı çıktı (derin tarama profili + bilgi)",
                 "Yardımı göster",
                 "Sürümü göster",
             ],
@@ -798,6 +865,8 @@ pub fn help_text(lang: Lang) -> String {
                 "Sortir le rapport en JSON",
                 "Accepter sauf si le seuil fail-on est atteint",
                 "Seuil de blocage : clean|risky|critical",
+                "Analyse maximale : toutes les passes à pleine sensibilité",
+                "Sortie détaillée (profil d'analyse + infos)",
                 "Afficher l'aide",
                 "Afficher la version",
             ],
@@ -820,6 +889,8 @@ pub fn help_text(lang: Lang) -> String {
                 "Salida del informe en JSON",
                 "Aceptar salvo que se alcance el umbral fail-on",
                 "Umbral de bloqueo: clean|risky|critical",
+                "Análisis máximo: todas las pasadas a plena sensibilidad",
+                "Salida detallada (perfil de análisis + info)",
                 "Mostrar la ayuda",
                 "Mostrar la versión",
             ],
@@ -842,6 +913,8 @@ pub fn help_text(lang: Lang) -> String {
                 "Hesabatı JSON kimi ver",
                 "Hədd keçilməyincə avtomatik qəbul et",
                 "Bloklama həddi: clean|risky|critical",
+                "Maksimum tarama: bütün dərin keçidlər tam həssaslıqda",
+                "Ətraflı çıxış (dərin tarama profili + məlumat)",
                 "Yardımı göstər",
                 "Versiyanı göstər",
             ],
@@ -863,8 +936,10 @@ pub fn help_text(lang: Lang) -> String {
          \x20     --json            {o2}\n\
          \x20     --skip-confirm    {o3}\n\
          \x20     --fail-on <SEV>   {o4}\n\
-         \x20 -h, --help            {o5}\n\
-         \x20 -V, --version         {o6}\n",
+         \x20     --max             {o5}\n\
+         \x20 -v, --verbose         {o6}\n\
+         \x20 -h, --help            {o7}\n\
+         \x20 -V, --version         {o8}\n",
         ver = env!("CARGO_PKG_VERSION"),
         c0 = c[0],
         c1 = c[1],
@@ -878,6 +953,8 @@ pub fn help_text(lang: Lang) -> String {
         o4 = o[4],
         o5 = o[5],
         o6 = o[6],
+        o7 = o[7],
+        o8 = o[8],
     )
 }
 

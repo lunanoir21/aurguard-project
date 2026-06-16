@@ -16,9 +16,10 @@
 use crate::astscan;
 use crate::aur::PackageInfo;
 use crate::config::Config;
-use crate::diff;
+use crate::diff::{self, Approval};
 use crate::i18n::{self, Lang};
 use crate::report::{Finding, Report, Risk, Severity, SourceHost};
+use crate::{decode, ioc, taint};
 use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
@@ -55,6 +56,51 @@ impl PkgSources {
     }
 }
 
+/// Which analysis passes run, and how aggressively.
+///
+/// The default already runs every high-precision pass (decode-and-rescan, IOC +
+/// wallet, taint, and version/maintainer delta). `--max` additionally enables
+/// the noisier heuristics (`ENCODED_BLOB`, `HIGH_ENTROPY_BLOB`). Individual
+/// passes can be disabled with the matching `--no-*` flag.
+#[derive(Debug, Clone, Copy)]
+pub struct ScanOpts {
+    /// T1.1/T1.4 — decode base64/hex blobs and rescan; entropy at `--max`.
+    pub decode: bool,
+    /// T2.2 — known-bad indicators + crypto-wallet detection.
+    pub ioc: bool,
+    /// T1.3 — taint from untrusted input to an execution sink.
+    pub taint: bool,
+    /// T2.3 — version delta with new risk + maintainer change.
+    pub delta: bool,
+    /// Maximum scrutiny: enables the higher-false-positive heuristics.
+    pub max: bool,
+    /// Emit informational findings about which deep passes ran.
+    pub verbose: bool,
+}
+
+impl Default for ScanOpts {
+    fn default() -> Self {
+        ScanOpts {
+            decode: true,
+            ioc: true,
+            taint: true,
+            delta: true,
+            max: false,
+            verbose: false,
+        }
+    }
+}
+
+impl ScanOpts {
+    /// `--max`: every pass on, at full sensitivity.
+    pub fn max() -> Self {
+        ScanOpts {
+            max: true,
+            ..Self::default()
+        }
+    }
+}
+
 /// Run the full analysis.
 ///
 /// - `meta`: AUR RPC metadata, or `None` for local (`--file`) analysis.
@@ -69,18 +115,43 @@ pub fn analyze(
     prior_digest: Option<&str>,
     now: DateTime<Utc>,
 ) -> Report {
+    let prior = prior_digest.map(|d| Approval {
+        digest: d.to_string(),
+        ..Approval::default()
+    });
+    analyze_with(
+        meta,
+        sources,
+        config,
+        prior.as_ref(),
+        now,
+        ScanOpts::default(),
+    )
+}
+
+/// Like [`analyze`], but with an explicit [`ScanOpts`] (deep-pass selection) and
+/// a full prior [`Approval`] record for version/maintainer delta tracking.
+pub fn analyze_with(
+    meta: Option<&PackageInfo>,
+    sources: &PkgSources,
+    config: &Config,
+    prior: Option<&Approval>,
+    now: DateTime<Utc>,
+    opts: ScanOpts,
+) -> Report {
     let text = &sources.pkgbuild;
     let lang = config.ui.lang;
     let mut findings = Vec::new();
     let host_sources = extract_sources(text, config);
 
     scan_script(text, &host_sources, config, &mut findings);
-    scan_install_scripts(&sources.install_scripts, &mut findings);
+    scan_deep(text, opts, &mut findings);
+    scan_install_scripts(&sources.install_scripts, opts, &mut findings);
     if let Some(m) = meta {
         scan_metadata(m, now, lang, &mut findings);
     }
     scan_history(text, &mut findings);
-    scan_diff(sources, prior_digest, &mut findings);
+    scan_diff(sources, prior, meta, opts, &mut findings);
 
     apply_ignores(text, config, &mut findings);
     dedup(&mut findings);
@@ -756,10 +827,54 @@ fn textual_exec_fallback(text: &str, findings: &mut Vec<Finding>) {
 }
 
 /// Scan each `.install` script (root-privileged hooks) with the AST pass.
-fn scan_install_scripts(scripts: &[(String, String)], findings: &mut Vec<Finding>) {
+/// Tier 1/2 deep passes gated by [`ScanOpts`]. `--max` turns on the noisier
+/// heuristics inside [`decode`]; the precise passes run by default.
+fn scan_deep(text: &str, opts: ScanOpts, findings: &mut Vec<Finding>) {
+    if opts.decode {
+        decode::scan(text, opts.max, findings);
+    }
+    if opts.ioc {
+        ioc::scan(text, findings);
+    }
+    if opts.taint {
+        taint::scan(text, findings);
+    }
+    if opts.verbose {
+        findings.push(
+            Finding::meta(
+                Severity::Info,
+                "SCAN_PROFILE",
+                format!(
+                    "Deep scan profile — decode={} ioc={} taint={} delta={} max={}",
+                    opts.decode, opts.ioc, opts.taint, opts.delta, opts.max
+                ),
+            )
+            .with_arg(if opts.max { "max" } else { "standard" }.to_string()),
+        );
+    }
+}
+
+fn scan_install_scripts(scripts: &[(String, String)], opts: ScanOpts, findings: &mut Vec<Finding>) {
     for (name, body) in scripts {
         let sub = astscan::scan(body).unwrap_or_default();
         for f in sub {
+            findings.push(Finding::meta(
+                f.severity,
+                f.code,
+                format!("in {name}: {}", f.message),
+            ));
+        }
+        // Run the Tier 1/2 deep passes over the root-privileged scriptlet too.
+        let mut deep = Vec::new();
+        scan_deep(
+            body,
+            ScanOpts {
+                verbose: false,
+                ..opts
+            },
+            &mut deep,
+        );
+        for f in deep {
             findings.push(Finding::meta(
                 f.severity,
                 f.code,
@@ -852,16 +967,90 @@ fn scan_history(text: &str, findings: &mut Vec<Finding>) {
     }
 }
 
-/// Compare current content digest against a previous approval.
-fn scan_diff(sources: &PkgSources, prior_digest: Option<&str>, findings: &mut Vec<Finding>) {
-    if let Some(prior) = prior_digest {
-        let current = diff::digest(&sources.pkgbuild, &sources.install_scripts);
-        if current != prior {
-            findings.push(Finding::meta(
-                Severity::Warn,
-                "PKGBUILD_CHANGED",
-                "PKGBUILD changed since you last approved this package",
-            ));
+/// Compare the current package against a previous approval: content digest
+/// (`PKGBUILD_CHANGED`), and — when T2.3 delta tracking is on — a maintainer
+/// change (`MAINTAINER_CHANGED`) and newly-introduced risk on a version bump
+/// (`DELTA_NEW_RISK`).
+fn scan_diff(
+    sources: &PkgSources,
+    prior: Option<&Approval>,
+    meta: Option<&PackageInfo>,
+    opts: ScanOpts,
+    findings: &mut Vec<Finding>,
+) {
+    let Some(prior) = prior else {
+        return;
+    };
+
+    let current = diff::digest(&sources.pkgbuild, &sources.install_scripts);
+    let content_changed = current != prior.digest;
+    if content_changed {
+        findings.push(Finding::meta(
+            Severity::Warn,
+            "PKGBUILD_CHANGED",
+            "PKGBUILD changed since you last approved this package",
+        ));
+    }
+
+    if !opts.delta {
+        return;
+    }
+
+    // Maintainer change (RPC metadata vs. stored approval).
+    if let (Some(prev), Some(curr)) = (
+        prior.maintainer.as_deref(),
+        meta.and_then(|m| m.maintainer.as_deref()),
+    ) {
+        if prev != curr {
+            findings.push(
+                Finding::meta(
+                    Severity::Warn,
+                    "MAINTAINER_CHANGED",
+                    format!("Maintainer changed since approval: {prev} → {curr}"),
+                )
+                .with_arg(format!("{prev} → {curr}")),
+            );
+        }
+    }
+
+    // New risk introduced by a version bump: a fresh Warn/Critical finding that
+    // was not present (or recorded) when the package was last approved.
+    let version_changed = match (meta.map(|m| m.version.as_str()), prior.version.as_deref()) {
+        (Some(now), Some(was)) => now != was,
+        _ => false,
+    };
+    if content_changed && version_changed && !prior.codes.is_empty() {
+        let mut escalate = false;
+        let mut new_codes: Vec<&'static str> = Vec::new();
+        for f in findings.iter() {
+            if matches!(
+                f.code,
+                "DELTA_NEW_RISK" | "PKGBUILD_CHANGED" | "MAINTAINER_CHANGED"
+            ) {
+                continue;
+            }
+            if f.severity >= Severity::Warn && !prior.codes.iter().any(|c| c == f.code) {
+                escalate |= f.severity == Severity::Critical;
+                if !new_codes.contains(&f.code) {
+                    new_codes.push(f.code);
+                }
+            }
+        }
+        if !new_codes.is_empty() {
+            let list = new_codes.join(", ");
+            let severity = if escalate {
+                Severity::Critical
+            } else {
+                Severity::Warn
+            };
+            findings.push(
+                Finding::meta(
+                    severity,
+                    "DELTA_NEW_RISK",
+                    format!("Version bump introduced new risk ({list})"),
+                )
+                .with_arg(list),
+            );
         }
     }
 }

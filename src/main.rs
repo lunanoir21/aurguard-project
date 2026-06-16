@@ -10,7 +10,7 @@ use aurguard::config::{Config, FailOn};
 use aurguard::diff::{self, Approvals};
 use aurguard::i18n::{self, Lang, K};
 use aurguard::installer::{self, ClonedRepo};
-use aurguard::pkgbuild::{self, PkgSources};
+use aurguard::pkgbuild::{self, PkgSources, ScanOpts};
 use aurguard::report::Report;
 use aurguard::ui::{self, UiOptions};
 use aurguard::wizard;
@@ -72,10 +72,51 @@ struct Cli {
     #[arg(long = "fail-on", value_name = "SEVERITY")]
     fail_on: Option<String>,
 
+    /// Maximum scrutiny: enable every deep pass at full sensitivity
+    /// (adds entropy + encoded-blob heuristics).
+    #[arg(long = "max")]
+    max: bool,
+
+    /// Verbose output: include the deep-scan profile and informational signals.
+    #[arg(short = 'v', long = "verbose")]
+    verbose: bool,
+
+    /// Disable the decode-and-rescan pass (base64/hex payloads).
+    #[arg(long = "no-decode")]
+    no_decode: bool,
+
+    /// Disable the IOC blocklist + crypto-wallet pass.
+    #[arg(long = "no-ioc")]
+    no_ioc: bool,
+
+    /// Disable the dataflow taint pass.
+    #[arg(long = "no-taint")]
+    no_taint: bool,
+
+    /// Disable version/maintainer delta tracking.
+    #[arg(long = "no-delta")]
+    no_delta: bool,
+
     /// Package name(s) given without a flag: show the report (like -I), or
     /// suggest packages whose name contains the term if there is no exact match.
     #[arg(value_name = "PACKAGE")]
     packages: Vec<String>,
+}
+
+impl Cli {
+    /// Build the [`ScanOpts`] selected by the flags. The default is every
+    /// high-precision pass on; `--max` adds the noisier heuristics, and each
+    /// `--no-*` flag opts out of one pass.
+    fn scan_opts(&self) -> ScanOpts {
+        ScanOpts {
+            decode: !self.no_decode,
+            ioc: !self.no_ioc,
+            taint: !self.no_taint,
+            delta: !self.no_delta,
+            max: self.max,
+            verbose: self.verbose,
+        }
+    }
 }
 
 #[tokio::main]
@@ -176,7 +217,14 @@ fn analyze_file(
         pkgbuild,
         install_scripts,
     };
-    let report = pkgbuild::analyze(None, &sources, config, None, chrono::Utc::now());
+    let report = pkgbuild::analyze_with(
+        None,
+        &sources,
+        config,
+        None,
+        chrono::Utc::now(),
+        cli.scan_opts(),
+    );
     present(&report, cli, opts)?;
     Ok(report.risk.exit_code())
 }
@@ -280,8 +328,15 @@ async fn info_one(
         None => return Ok(0),
     };
     let sources = client.sources(&meta.name).await?;
-    let prior = approvals.approved_digest(&meta.name);
-    let report = pkgbuild::analyze(Some(&meta), &sources, config, prior, chrono::Utc::now());
+    let prior = approvals.approval(&meta.name);
+    let report = pkgbuild::analyze_with(
+        Some(&meta),
+        &sources,
+        config,
+        prior,
+        chrono::Utc::now(),
+        cli.scan_opts(),
+    );
     present(&report, cli, opts)?;
     Ok(report.risk.exit_code())
 }
@@ -336,13 +391,14 @@ async fn sync_one(
         ui::finish_spinner(sp);
     }
 
-    let prior = approvals.approved_digest(&name).map(|s| s.to_string());
-    let report = pkgbuild::analyze(
+    let prior = approvals.approval(&name).cloned();
+    let report = pkgbuild::analyze_with(
         Some(&meta),
         &sources,
         config,
-        prior.as_deref(),
+        prior.as_ref(),
         chrono::Utc::now(),
+        cli.scan_opts(),
     );
     present(&report, cli, opts)?;
 
@@ -352,9 +408,19 @@ async fn sync_one(
 
     repo.build().await?;
 
-    // Record approval digest + ledger entry on success.
+    // Record approval digest + version/maintainer/codes (for delta tracking) +
+    // ledger entry on success.
     let digest = diff::digest(&sources.pkgbuild, &sources.install_scripts);
-    approvals.approve(&name, digest).ok();
+    let codes = report.findings.iter().map(|f| f.code.to_string()).collect();
+    approvals
+        .approve_full(
+            &name,
+            digest,
+            Some(meta.version.clone()),
+            meta.maintainer.clone(),
+            codes,
+        )
+        .ok();
     installer::record_installed(&name).ok();
     ui::success(
         &i18n::fill(i18n::t(opts.lang, K::Installed), Some(&name)),
