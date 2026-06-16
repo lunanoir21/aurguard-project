@@ -8,7 +8,8 @@
 //! extension identify it as a compiled binary, hashing each one so it can be
 //! looked up on VirusTotal (see [`crate::vt`]).
 //!
-//! It runs only where a real tree exists: the clone-first `-S` flow. Pure
+//! It runs wherever a real tree exists: the clone-first `-S` flow and a local
+//! `--file` analysis (which scans the `PKGBUILD`'s own directory). Pure
 //! metadata/`-I` lookups never see a tree.
 
 use crate::i18n::{self, Lang};

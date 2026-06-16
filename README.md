@@ -227,8 +227,8 @@ Analysis layers several passes over the build sources (the `PKGBUILD` **and** an
    `eval`, `sh -c`, here-strings (`<<<`), `source`, and pipes into a shell.
 8. **`pkgver()` & PGP** — flags network/`eval` inside `pkgver()` (makepkg runs
    it) and signature-bearing sources with no `validpgpkeys`.
-9. **Committed-binary scan** (`src/srcscan.rs`, `-S` only) — walks the cloned
-   tree for prebuilt ELF/PE/Mach-O/`.so`/`.pyc`/wasm artifacts, hashing each so
+9. **Committed-binary scan** (`src/srcscan.rs`, `-S` and `--file`) — walks the
+   package tree for prebuilt ELF/PE/Mach-O/`.so`/`.pyc`/wasm artifacts, hashing each so
    it can be checked on VirusTotal (`src/vt.rs`) — offline by hash+link, or via
    the API with `--vt`.
 10. **Metadata, history & delta** — votes, maintainer age, staleness, `pkgrel`
@@ -319,7 +319,7 @@ default; the noisier heuristics are gated behind `--max`.
 | `CUSTOM_RULE`       | user-set   | rules  | a user-defined `[signatures]` rule matched (severity set in config)|
 | `EVASION_NORMALIZED`| WARN       | normalize | obfuscation revealed after constant-folding (`xmr""ig`, `${IFS}`) |
 | `PKGVER_EXEC`       | CRITICAL   | pkgver | `pkgver()` runs network/`eval` at build time (makepkg executes it) |
-| `COMMITTED_BINARY`  | CRITICAL   | srcscan | a prebuilt executable committed in the package tree (`-S` only)   |
+| `COMMITTED_BINARY`  | CRITICAL   | srcscan | a prebuilt executable committed in the package tree (`-S` and `--file`) |
 | `MISSING_PGP`       | WARN       | pgp    | a `.sig`/`.asc` source with no `validpgpkeys` (unverifiable)       |
 | `PGP_KEYSERVER_FETCH` | WARN     | pgp    | imports a PGP key from a keyserver at build time (unpinned trust)  |
 | `MAINTAINER_CHANGED`| WARN       | delta  | the AUR maintainer changed since you approved the package          |
@@ -329,8 +329,9 @@ default; the noisier heuristics are gated behind `--max`.
 
 ### VirusTotal (committed binaries)
 
-Every prebuilt binary found in a `-S` clone is hashed (SHA-256). aurguard never
-uploads files; it uses the hash two ways:
+Every prebuilt binary found in a package tree (a `-S` clone, or the directory of
+a `--file` analysis) is hashed (SHA-256). aurguard never uploads files; it uses
+the hash two ways:
 
 - **Offline (always):** a `VT_HINT` line prints the hash and a
   `https://www.virustotal.com/gui/file/<hash>` link — paste it into VirusTotal

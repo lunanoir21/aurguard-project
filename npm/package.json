@@ -1,13 +1,13 @@
 {
   "name": "aurguard",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "AUR package security guard — analyze before you install.",
   "bin": {
     "aurguard": "bin/aurguard.js"
   },
   "optionalDependencies": {
-    "aurguard-linux-x64": "1.4.0",
-    "aurguard-linux-arm64": "1.4.0"
+    "aurguard-linux-x64": "1.4.1",
+    "aurguard-linux-arm64": "1.4.1"
   },
   "os": [
     "linux"

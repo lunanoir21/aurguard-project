@@ -175,7 +175,7 @@ async fn run(cli: Cli) -> Result<i32> {
         return query(opts);
     }
     if let Some(path) = cli.file.clone() {
-        return analyze_file(&path, &cli, &config, opts);
+        return analyze_file(&path, &cli, &config, opts).await;
     }
     if !cli.sync.is_empty() {
         return sync(&cli.sync.clone(), &cli, &config, opts).await;
@@ -207,8 +207,10 @@ fn present(report: &Report, cli: &Cli, opts: UiOptions) -> Result<()> {
     Ok(())
 }
 
-/// `--file`: analyze a local PKGBUILD (plus sibling `.install` scripts).
-fn analyze_file(
+/// `--file`: analyze a local PKGBUILD (plus sibling `.install` scripts), and
+/// scan its directory for committed binaries (with offline VirusTotal hints, or
+/// an API lookup under `--vt`).
+async fn analyze_file(
     path: &std::path::Path,
     cli: &Cli,
     config: &Config,
@@ -230,7 +232,7 @@ fn analyze_file(
         pkgbuild,
         install_scripts,
     };
-    let report = pkgbuild::analyze_with(
+    let mut report = pkgbuild::analyze_with(
         None,
         &sources,
         config,
@@ -238,22 +240,55 @@ fn analyze_file(
         chrono::Utc::now(),
         cli.scan_opts(),
     );
-    // Note: the committed-binary tree scan (T2.4) runs only on the isolated
-    // `-S` clone, not on an arbitrary `--file` parent directory.
+    attach_tree_scan(&mut report, dir, cli, config, opts).await;
     present(&report, cli, opts)?;
     Ok(report.risk.exit_code())
 }
 
-/// Scan the source tree for committed binaries, append a `COMMITTED_BINARY`
-/// finding and an offline VirusTotal hint for each, and return the binaries so
-/// the caller can run an (opt-in) API lookup. Does not finalize the report.
-fn add_srcscan(report: &mut Report, dir: &std::path::Path, lang: Lang) -> Vec<srcscan::Binary> {
+/// Scan a real package tree for committed binaries: append a `COMMITTED_BINARY`
+/// finding and an offline VirusTotal hint for each, run the local known-bad hash
+/// check, and — when opted in with `--vt` — query the VirusTotal API. Finalizes
+/// the report when anything is added.
+async fn attach_tree_scan(
+    report: &mut Report,
+    dir: &std::path::Path,
+    cli: &Cli,
+    config: &Config,
+    opts: UiOptions,
+) {
     let bins = srcscan::scan_tree(dir);
-    for b in &bins {
-        report.findings.push(b.finding(lang));
+    if bins.is_empty() {
+        return;
     }
-    report.findings.extend(vt::offline_hints(&bins, lang));
-    bins
+    for b in &bins {
+        report.findings.push(b.finding(config.ui.lang));
+    }
+    report
+        .findings
+        .extend(vt::offline_hints(&bins, config.ui.lang));
+    // Local known-bad hash check against the user's [ioc].hashes blocklist.
+    report.findings.extend(srcscan::match_known_bad(
+        &bins,
+        &config.ioc.hashes,
+        config.ui.lang,
+    ));
+    if cli.vt || config.virustotal.enabled {
+        match config.virustotal.key() {
+            Some(key) => {
+                let sp = (!cli.json).then(|| ui::spinner("VirusTotal", opts));
+                let vtf = vt::api_findings(&key, &bins, config.ui.lang).await;
+                if let Some(sp) = sp {
+                    ui::finish_spinner(sp);
+                }
+                report.findings.extend(vtf);
+            }
+            None => ui::error(
+                "--vt needs an API key: set [virustotal].api_key or AURGUARD_VT_KEY.",
+                opts,
+            ),
+        }
+    }
+    report.finalize();
 }
 
 /// `-I`: report only for one or more packages. Exit code reflects the worst
@@ -429,32 +464,7 @@ async fn sync_one(
     );
     // The clone is a real tree: scan it for committed prebuilt binaries (T2.4),
     // attach offline VirusTotal hints, and — when opted in — query the VT API.
-    let bins = add_srcscan(&mut report, repo.path(), config.ui.lang);
-    if !bins.is_empty() {
-        // Local known-bad hash check against the user's [ioc].hashes blocklist.
-        report.findings.extend(srcscan::match_known_bad(
-            &bins,
-            &config.ioc.hashes,
-            config.ui.lang,
-        ));
-        if cli.vt || config.virustotal.enabled {
-            match config.virustotal.key() {
-                Some(key) => {
-                    let sp = (!cli.json).then(|| ui::spinner("VirusTotal", opts));
-                    let vtf = vt::api_findings(&key, &bins, config.ui.lang).await;
-                    if let Some(sp) = sp {
-                        ui::finish_spinner(sp);
-                    }
-                    report.findings.extend(vtf);
-                }
-                None => ui::error(
-                    "--vt needs an API key: set [virustotal].api_key or AURGUARD_VT_KEY.",
-                    opts,
-                ),
-            }
-        }
-        report.finalize();
-    }
+    attach_tree_scan(&mut report, repo.path(), cli, config, opts).await;
     present(&report, cli, opts)?;
 
     if !decide(&report, cli, threshold, opts) {
