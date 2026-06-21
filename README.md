@@ -93,9 +93,10 @@ aurguard -S <package>...    Analyze and install AUR package(s)
 aurguard -I <package>...     Show the security report only (no install)
 aurguard --file <PATH>      Analyze a local PKGBUILD (offline)
 aurguard --setup            Interactive setup wizard (language, policy, …)
+aurguard --update-rules     Fetch + install the latest signature ruleset
 aurguard -Q                 List packages installed via aurguard
 aurguard --version          Print version
-aurguard --help             Print help
+aurguard --help             Print help (full options, examples, exit codes)
 ```
 
 `-S` and `-I` accept multiple packages; one bad package does not abort the rest.
@@ -136,6 +137,7 @@ $ aurguard -S opencode
 | `--no-taint`          | Disable the dataflow taint pass                                    |
 | `--no-delta`          | Disable version/maintainer delta tracking                         |
 | `--vt`                | Look committed-binary hashes up on the VirusTotal API (needs a key) |
+| `--update-rules`      | Fetch + validate + install the ruleset named by `[ruleset].rules_url` |
 
 ### Examples
 
@@ -157,6 +159,9 @@ aurguard -I yay --json --no-color
 
 # Trust low/medium-risk packages, block anything Risky or worse
 aurguard -S ripgrep-bin --skip-confirm --fail-on risky
+
+# Pull the latest community signatures (validated before install, never downgrades)
+aurguard --update-rules
 ```
 
 ---
@@ -231,7 +236,20 @@ Analysis layers several passes over the build sources (the `PKGBUILD` **and** an
    package tree for prebuilt ELF/PE/Mach-O/`.so`/`.pyc`/wasm artifacts, hashing each so
    it can be checked on VirusTotal (`src/vt.rs`) — offline by hash+link, or via
    the API with `--vt`.
-10. **Metadata, history & delta** — votes, maintainer age, staleness, `pkgrel`
+10. **Source-tree text scan** (`src/srcscan.rs::scan_text_files`, `-S` and `--file`) —
+    malware doesn't have to live in the `PKGBUILD`: the same tree-walk also runs
+    the *full* `PKGBUILD`-grade stack (AST pass, signature database, decode,
+    taint, …) over every build-helper script it finds — `*.sh`, `*.py`, `*.js`,
+    `*.pl`, `*.rb`, `Makefile`, `configure`, `build.rs`, and any `.install` file,
+    including ones no `install=` field references. Each finding is prefixed
+    with `path:line` so multi-file hits stay attributable.
+11. **External/updatable ruleset** (`src/ruleset.rs`, `aurguard --update-rules`) —
+    every `*.toml` under `~/.config/aurguard/rules.d/` is layered on the 24
+    built-in signatures without recompiling: a rule with the same `code`
+    overrides a built-in, a new `code` is added. `--update-rules` fetches a
+    versioned ruleset over HTTPS, validates it, and refuses to install one that
+    isn't strictly newer than what's already there.
+12. **Metadata, history & delta** — votes, maintainer age, staleness, `pkgrel`
     churn, change-tracking against your last approval, plus maintainer-change and
     version-bump-introduces-new-risk detection.
 
@@ -316,7 +334,7 @@ default; the noisier heuristics are gated behind `--max`.
 | `IOC_MATCH`         | CRITICAL   | ioc    | a known-bad indicator (historic C2 / drop host)                    |
 | `WALLET_ADDRESS`    | WARN       | ioc    | a hardcoded BTC / ETH / XMR wallet address                         |
 | `TAINTED_EXEC`      | CRITICAL   | taint  | untrusted input (a captured `$(curl …)` **or** a downloaded file) reaching an `eval`/`sh -c`/`<<<`/source sink |
-| `CUSTOM_RULE`       | user-set   | rules  | a user-defined `[signatures]` rule matched (severity set in config)|
+| `CUSTOM_RULE`       | user-set   | rules  | a `[signatures]` config rule **or** a `rules.d/` overlay rule matched (severity set by the rule) |
 | `EVASION_NORMALIZED`| WARN       | normalize | obfuscation revealed after constant-folding (`xmr""ig`, `${IFS}`) |
 | `PKGVER_EXEC`       | CRITICAL   | pkgver | `pkgver()` runs network/`eval` at build time (makepkg executes it) |
 | `COMMITTED_BINARY`  | CRITICAL   | srcscan | a prebuilt executable committed in the package tree (`-S` and `--file`) |
@@ -456,7 +474,31 @@ not = ["$pkgdir"]
 # against committed binaries (a local, no-API VirusTotal-style check).
 hosts  = ["c2.evil.example", "1.2.3.4"]
 hashes = ["e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"]
+
+[ruleset]
+# Where `aurguard --update-rules` fetches a versioned ruleset from (HTTPS
+# only). Defaults to the project's own community ruleset, below.
+rules_url = "https://raw.githubusercontent.com/lunanoir21/aurguard-project/main/rules.d/community.toml"
 ```
+
+Beyond `config.toml`, every `*.toml` under `~/.config/aurguard/rules.d/` is
+loaded automatically and layered on the 24 built-in signatures **without
+recompiling** — full CNF conditions, not just an AND of substrings:
+
+```toml
+version = 1
+[[rule]]
+code      = "INTERNAL_MIRROR"
+severity  = "warn"                              # critical | warn | info
+message   = "Fetches from a retired internal mirror"
+clauses   = [["old-mirror.corp"], ["curl", "wget"]]   # AND of OR-clauses
+not       = ["$pkgdir"]
+```
+
+A `code` that matches a built-in **overrides** it; a new `code` is added.
+`aurguard --update-rules` fetches the file at `rules_url`, parses and
+validates it *before* touching disk, and refuses to install a `version` that
+isn't strictly newer than the one already there (no silent downgrade).
 
 You can also silence a single finding inline in a `PKGBUILD`:
 
@@ -578,7 +620,7 @@ cargo build --release
 
 - `cargo fmt --check` — formatted
 - `cargo clippy -- -D warnings` — zero warnings
-- `cargo test` — 101 unit + 26 integration tests: every CRITICAL rule, the 24-rule YARA-style signature database, custom config rules, the AST pass, the recursive decode / normalize / IOC / file-and-variable taint / delta / pkgver / PGP / srcscan / VirusTotal deep passes, metadata signals, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
+- `cargo test` — 113 unit + 26 integration tests: every CRITICAL rule, the 24-rule YARA-style signature database, custom config rules + the `rules.d/` updatable overlay, the AST pass, the recursive decode / normalize / IOC / file-and-variable taint / delta / pkgver / PGP / srcscan / source-tree text scan / VirusTotal deep passes, metadata signals, config/ignore handling, diff tracking, localization, AUR parsing, and a report-render smoke test
 - No raw `unwrap()` in non-test code — all errors flow through `anyhow`
 - Release profile tuned for size: `opt-level = "z"`, `lto`, `strip = true`
 
@@ -635,7 +677,10 @@ git push origin v0.2.0
 **Shipped beyond the initial cut:** clone-first (TOCTOU-safe) installs,
 `.install` scriptlet analysis, a `tree-sitter-bash` AST pass, approval-based
 change tracking (`PKGBUILD_CHANGED`), user config, inline ignores, `--file`
-offline analysis, `--fail-on`, and batch operations.
+offline analysis, `--fail-on`, batch operations, a source-tree text scan over
+build-helper scripts (T2.4), and an external/updatable signature ruleset
+(`--update-rules`, T2.1). `docs/SECURITY-ROADMAP.md` tracks the full Tier
+1/Tier 2 detection model — every item in it is implemented.
 
 **Still out of scope:**
 

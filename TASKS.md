@@ -2,6 +2,31 @@
 
 Status legend: ⬜ todo · 🔨 in progress · ✅ done
 
+## Phase 17 — 1.5.0: close the security-roadmap gaps
+- ✅ T17.1 Found and fixed a real bug: `attach_tree_scan` returned early when a
+  tree had no committed binaries, silently skipping every other tree-level
+  check for that package (VT hints, IOC hash match — now independent of bins)
+- ✅ T17.2 `src/srcscan.rs::scan_text_files` — T2.4's missing half: every
+  build-helper script in the cloned tree (`*.sh`, `*.bash`, `*.py`, `*.js`,
+  `*.pl`, `*.rb`, `Makefile`, `configure`, `build.rs`, `*.install` —
+  including ones no `install=` field references) now gets the *same*
+  AST + signature + decode + taint + normalize + IOC stack as the `PKGBUILD`
+  itself, via a new `pkgbuild::scan_source_file`, attributed by `path:line`
+- ✅ T17.3 `src/ruleset.rs` — T2.1's external/updatable signature ruleset:
+  `rules.d/*.toml` overlay (full CNF clauses, `code`-based override of
+  built-ins), `aurguard --update-rules` (HTTPS-only, parse-and-validate
+  before install, never downgrades a `version`), `[ruleset] rules_url` in
+  `config.toml`, default source `rules.d/community.toml` in this repo
+- ✅ T17.4 `rules::scan_line_except` — lets the built-in pass skip a code a
+  loaded overlay rule redefines; `pkgbuild::scan_signatures` unifies the
+  builtin + overlay + `[signatures.custom]` call sites (was duplicated 3x)
+- ✅ T17.5 `--help` rewritten: every flag now documented (previously missing
+  `--no-decode/-normalize/-ioc/-taint/-delta`, `--vt`, bare `<PKG>`), plus new
+  Examples / Exit codes / Files sections — localized in all 5 languages
+- ✅ T17.6 README, docs/index.html (GitHub Pages), and config docs updated;
+  113 unit + 26 integration tests (was 101+26); `cargo fmt`/`clippy -D
+  warnings`/`test` green; version 1.4.1 → 1.5.0 (Cargo.toml + npm/*)
+
 ## Phase 16 — 1.0.0 release
 - ✅ T16.1 Fix CI: `unnecessary_sort_by` clippy error on rustc 1.96 (`Report::finalize`)
 - ✅ T16.2 Pin local toolchain to stable so clippy matches CI

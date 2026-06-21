@@ -1,0 +1,44 @@
+# aurguard community ruleset (T2.1 — external/updatable signatures).
+#
+# Fetched on demand with `aurguard --update-rules` (see [ruleset] rules_url
+# in config.toml; this file is the default source). Layered on top of the
+# 24 rules compiled into the binary (src/rules.rs): a `code` here that
+# matches a built-in overrides it; a new `code` is added. Every match is
+# reported under the stable `CUSTOM_RULE` finding code with this `code`
+# folded into the message.
+#
+# Format and trust model: docs/SECURITY-ROADMAP.md, section T2.1.
+
+version = 1
+
+[[rule]]
+code = "WEBHOOK_EXFIL_GENERIC"
+severity = "critical"
+tags = ["exfil", "c2"]
+message = "Sends data to a generic webhook/tunnel host often abused for C2"
+clauses = [["webhook.site", "requestbin.com", "pipedream.net", "ngrok.io", "ngrok-free.app", "ngrok.app"]]
+not = []
+
+[[rule]]
+code = "CURL_BASH_PROCSUB"
+severity = "critical"
+tags = ["dropper"]
+message = "Downloads and runs code via shell process substitution"
+clauses = [["bash <(", "sh <(", "zsh <("], ["curl", "wget"]]
+not = []
+
+[[rule]]
+code = "NODE_REMOTE_EVAL"
+severity = "warn"
+tags = ["dropper"]
+message = "Evaluates code fetched over the network in a Node/JS runtime"
+clauses = [["eval(", "new function("], ["fetch(", "axios.get", "require(\"https\")", "require('https')", "http.get"]]
+not = []
+
+[[rule]]
+code = "GIT_HOOKS_PATH_REDIRECT"
+severity = "critical"
+tags = ["persistence", "backdoor"]
+message = "Redirects git hooks to an attacker-controlled directory"
+clauses = [["core.hookspath"]]
+not = ["$pkgdir", "${pkgdir", "$srcdir", "${srcdir"]

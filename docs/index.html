@@ -358,7 +358,7 @@
       <div class="badges">
         <span class="badge">Platform <b>Arch / Linux</b></span>
         <span class="badge">Written in <b>Rust</b></span>
-        <span class="badge"><b>10</b> analysis passes</span>
+        <span class="badge"><b>12</b> analysis passes</span>
         <span class="badge"><b>5</b> languages</span>
         <span class="badge"><b>0</b> telemetry</span>
         <span class="badge">MIT</span>
@@ -426,11 +426,12 @@
       <section id="features">
         <h2><span class="hash">#</span> What it checks</h2>
         <p class="lead">
-          Ten analysis passes feed one report: a tree-sitter-bash AST pass, textual
-          heuristics, a 24-rule YARA-style signature database, recursive decoding,
-          anti-evasion normalization, dataflow taint, IOC/wallet matching,
-          committed-binary + VirusTotal checks, PGP/<code>pkgver()</code> integrity,
-          and package metadata &amp; history.
+          Twelve analysis passes feed one report: a tree-sitter-bash AST pass, textual
+          heuristics, a 24-rule YARA-style signature database (plus an updatable
+          <code>rules.d/</code> overlay), recursive decoding, anti-evasion normalization,
+          dataflow taint, IOC/wallet matching, committed-binary + VirusTotal checks, a
+          source-tree text scan over every build-helper script, PGP/<code>pkgver()</code>
+          integrity, and package metadata &amp; history.
         </p>
         <div class="grid">
           <div class="card">
@@ -488,6 +489,26 @@
             <p>
               <code>.install</code> hooks run as root, so they get the full rule set
               plus a flag for any network access at install time.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">📜</span>
+            <h3>Source-tree text scan</h3>
+            <p>
+              Malware doesn't have to live in the <code>PKGBUILD</code>. Every
+              <code>*.sh</code>, <code>*.py</code>, <code>*.js</code>, <code>Makefile</code>,
+              <code>build.rs</code>, and unreferenced <code>.install</code> file in the
+              cloned tree gets the same AST + signature + decode + taint treatment,
+              attributed by <code>path:line</code>.
+            </p>
+          </div>
+          <div class="card">
+            <span class="ico">🔄</span>
+            <h3>Updatable ruleset</h3>
+            <p>
+              <code>aurguard --update-rules</code> fetches a versioned TOML signature
+              set over HTTPS, validates it before touching disk, and never downgrades.
+              Layer your own rules in <code>rules.d/</code> without recompiling.
             </p>
           </div>
           <div class="card">
@@ -558,6 +579,9 @@
           <span class="chip warn">UNKNOWN_SOURCE</span>
           <span class="chip warn">TOR_C2</span>
           <span class="chip warn">PIP_INDEX_HIJACK</span>
+          <span class="chip crit">WEBHOOK_EXFIL_GENERIC</span>
+          <span class="chip crit">CURL_BASH_PROCSUB</span>
+          <span class="chip warn">CUSTOM_RULE</span>
         </div>
         <p class="lead" style="margin-top: 14px">
           …and more — 24 signature rules plus the heuristic, decode, taint, metadata,

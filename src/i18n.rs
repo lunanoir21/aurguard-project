@@ -973,18 +973,39 @@ pub fn fill(template: &str, arg: Option<&str>) -> String {
 /// in English (they are the actual CLI tokens); only the descriptions and
 /// section headers are translated.
 pub fn help_text(lang: Lang) -> String {
-    let (about, usage, commands, options, c, o) = match lang {
+    // Section headers, then: 6 command/operation descriptions, 15 option
+    // descriptions, 5 example captions, 3 exit-code explanations, and 2
+    // `[files]`-section words. Every array's *index* means the same flag
+    // across all five languages; see the `format!` below for the mapping.
+    let (
+        about,
+        usage,
+        commands_h,
+        options_h,
+        examples_h,
+        exit_h,
+        files_h,
+        c,
+        o,
+        ex,
+        exit_d,
+        files_d,
+    ) = match lang {
         Lang::En => (
             "AUR package security guard — analyze before you install.",
             "Usage",
-            "Commands",
+            "Operations",
             "Options",
+            "Examples",
+            "Exit codes",
+            "Files",
             [
                 "Analyze and install AUR package(s)",
                 "Show the security report only (no install)",
                 "List packages installed via aurguard",
                 "Analyze a local PKGBUILD (offline)",
                 "Run the interactive setup wizard",
+                "Fetch and install the latest signature ruleset",
             ],
             [
                 "Interface language: en|tr|fr|es|az",
@@ -994,21 +1015,47 @@ pub fn help_text(lang: Lang) -> String {
                 "Block threshold: clean|risky|critical",
                 "Maximum scrutiny: every deep pass at full sensitivity",
                 "Verbose output (deep-scan profile + info findings)",
+                "Disable the decode-and-rescan pass (base64/hex payloads)",
+                "Disable the constant-fold anti-evasion pass",
+                "Disable the IOC blocklist + crypto-wallet pass",
+                "Disable the dataflow taint pass",
+                "Disable version/maintainer delta tracking",
+                "Look committed-binary hashes up on VirusTotal (needs a key)",
                 "Print help",
                 "Print version",
+            ],
+            [
+                "Analyze and install",
+                "Report only, never installs",
+                "Lint your own PKGBUILD (offline, CI-friendly)",
+                "CI gate: machine-readable, no color",
+                "Update the signature ruleset",
+            ],
+            [
+                "no findings",
+                "warn-level findings, none critical",
+                "at least one critical finding — blocked by default",
+            ],
+            [
+                "optional",
+                "external signature overlay — see --update-rules",
             ],
         ),
         Lang::Tr => (
             "AUR paket güvenlik bekçisi — kurmadan önce analiz et.",
             "Kullanım",
-            "Komutlar",
+            "İşlemler",
             "Seçenekler",
+            "Örnekler",
+            "Çıkış kodları",
+            "Dosyalar",
             [
                 "AUR paket(ler)ini analiz et ve kur",
                 "Yalnızca güvenlik raporunu göster (kurma)",
                 "aurguard ile kurulan paketleri listele",
                 "Yerel bir PKGBUILD analiz et (çevrimdışı)",
                 "Etkileşimli kurulum sihirbazını çalıştır",
+                "En güncel imza kümesini indir ve kur",
             ],
             [
                 "Arayüz dili: en|tr|fr|es|az",
@@ -1018,21 +1065,44 @@ pub fn help_text(lang: Lang) -> String {
                 "Engelleme eşiği: clean|risky|critical",
                 "En yüksek tarama: tüm derin geçişler tam duyarlılıkta",
                 "Ayrıntılı çıktı (derin tarama profili + bilgi)",
+                "Decode-and-rescan geçişini kapat (base64/hex veri)",
+                "Sabit-katlama (anti-evasion) geçişini kapat",
+                "IOC kara listesi + kripto cüzdan geçişini kapat",
+                "Veri akışı (taint) geçişini kapat",
+                "Versiyon/bakımcı değişim takibini kapat",
+                "Commit edilmiş ikili dosya hash'lerini VirusTotal'da sorgula (anahtar gerekir)",
                 "Yardımı göster",
                 "Sürümü göster",
             ],
+            [
+                "Analiz et ve kur",
+                "Sadece raporla, asla kurmaz",
+                "Kendi PKGBUILD'ini denetle (çevrimdışı, CI-uyumlu)",
+                "CI kapısı: makine-okunur, renksiz",
+                "İmza kümesini güncelle",
+            ],
+            [
+                "bulgu yok",
+                "uyarı seviyesinde bulgu var, kritik yok",
+                "en az bir kritik bulgu var — varsayılan olarak engellenir",
+            ],
+            ["opsiyonel", "dış imza katmanı — bkz. --update-rules"],
         ),
         Lang::Fr => (
             "Gardien de sécurité des paquets AUR — analysez avant d'installer.",
             "Utilisation",
-            "Commandes",
+            "Opérations",
             "Options",
+            "Exemples",
+            "Codes de sortie",
+            "Fichiers",
             [
                 "Analyser et installer des paquets AUR",
                 "Afficher seulement le rapport (sans installer)",
                 "Lister les paquets installés via aurguard",
                 "Analyser un PKGBUILD local (hors ligne)",
                 "Lancer l'assistant de configuration",
+                "Récupérer et installer le dernier jeu de signatures",
             ],
             [
                 "Langue de l'interface : en|tr|fr|es|az",
@@ -1042,21 +1112,47 @@ pub fn help_text(lang: Lang) -> String {
                 "Seuil de blocage : clean|risky|critical",
                 "Analyse maximale : toutes les passes à pleine sensibilité",
                 "Sortie détaillée (profil d'analyse + infos)",
+                "Désactiver le décodage et la nouvelle analyse (base64/hex)",
+                "Désactiver la passe anti-évasion (repliage de constantes)",
+                "Désactiver la liste IOC + détection de portefeuille crypto",
+                "Désactiver la passe d'analyse de flux de données (taint)",
+                "Désactiver le suivi des changements de version/mainteneur",
+                "Vérifier les hachages de binaires sur VirusTotal (clé requise)",
                 "Afficher l'aide",
                 "Afficher la version",
+            ],
+            [
+                "Analyser et installer",
+                "Rapport seulement, n'installe jamais",
+                "Vérifiez votre propre PKGBUILD (hors ligne, adapté CI)",
+                "Verrou CI : lisible par machine, sans couleur",
+                "Mettre à jour le jeu de signatures",
+            ],
+            [
+                "aucune découverte",
+                "découvertes de niveau avertissement, aucune critique",
+                "au moins une découverte critique — bloqué par défaut",
+            ],
+            [
+                "optionnel",
+                "surcouche de signatures externe — voir --update-rules",
             ],
         ),
         Lang::Es => (
             "Guardián de seguridad de paquetes AUR — analiza antes de instalar.",
             "Uso",
-            "Comandos",
+            "Operaciones",
             "Opciones",
+            "Ejemplos",
+            "Códigos de salida",
+            "Archivos",
             [
                 "Analizar e instalar paquete(s) de la AUR",
                 "Mostrar solo el informe (sin instalar)",
                 "Listar paquetes instalados con aurguard",
                 "Analizar un PKGBUILD local (sin conexión)",
                 "Ejecutar el asistente de configuración",
+                "Descargar e instalar el conjunto de firmas más reciente",
             ],
             [
                 "Idioma de la interfaz: en|tr|fr|es|az",
@@ -1066,21 +1162,44 @@ pub fn help_text(lang: Lang) -> String {
                 "Umbral de bloqueo: clean|risky|critical",
                 "Análisis máximo: todas las pasadas a plena sensibilidad",
                 "Salida detallada (perfil de análisis + info)",
+                "Desactivar la pasada de decodificación y reanálisis (base64/hex)",
+                "Desactivar la pasada anti-evasión (plegado de constantes)",
+                "Desactivar la lista IOC + detección de monederos cripto",
+                "Desactivar la pasada de análisis de flujo de datos (taint)",
+                "Desactivar el seguimiento de cambios de versión/mantenedor",
+                "Consultar hashes de binarios en VirusTotal (requiere clave)",
                 "Mostrar la ayuda",
                 "Mostrar la versión",
             ],
+            [
+                "Analizar e instalar",
+                "Solo informe, nunca instala",
+                "Revisa tu propio PKGBUILD (sin conexión, apto para CI)",
+                "Puerta de CI: legible por máquina, sin color",
+                "Actualizar el conjunto de firmas",
+            ],
+            [
+                "sin hallazgos",
+                "hallazgos de nivel de advertencia, ninguno crítico",
+                "al menos un hallazgo crítico — bloqueado por defecto",
+            ],
+            ["opcional", "capa de firmas externa — ver --update-rules"],
         ),
         Lang::Az => (
             "AUR paket təhlükəsizlik gözətçisi — quraşdırmadan əvvəl təhlil et.",
             "İstifadə",
-            "Əmrlər",
+            "Əməliyyatlar",
             "Seçimlər",
+            "Nümunələr",
+            "Çıxış kodları",
+            "Fayllar",
             [
                 "AUR paket(lər)ini təhlil et və quraşdır",
                 "Yalnız təhlükəsizlik hesabatını göstər (quraşdırma)",
                 "aurguard ilə quraşdırılan paketləri sadala",
                 "Yerli PKGBUILD-i təhlil et (oflayn)",
                 "İnteraktiv quraşdırma sehrbazını işlət",
+                "Ən son imza dəstini yüklə və quraşdır",
             ],
             [
                 "İnterfeys dili: en|tr|fr|es|az",
@@ -1090,22 +1209,43 @@ pub fn help_text(lang: Lang) -> String {
                 "Bloklama həddi: clean|risky|critical",
                 "Maksimum tarama: bütün dərin keçidlər tam həssaslıqda",
                 "Ətraflı çıxış (dərin tarama profili + məlumat)",
+                "Decode-and-rescan keçidini söndür (base64/hex)",
+                "Sabit-qatlama (anti-evasion) keçidini söndür",
+                "IOC qara siyahı + kripto pul kisəsi aşkarlamasını söndür",
+                "Məlumat axını (taint) keçidini söndür",
+                "Versiya/baxıcı dəyişikliyi izlənməsini söndür",
+                "Commit edilmiş binar hash-lərini VirusTotal-da yoxla (açar lazımdır)",
                 "Yardımı göstər",
                 "Versiyanı göstər",
             ],
+            [
+                "Təhlil et və quraşdır",
+                "Yalnız hesabat, heç vaxt quraşdırmır",
+                "Öz PKGBUILD-ini yoxla (oflayn, CI-uyğun)",
+                "CI qapısı: maşın-oxunaqlı, rəngsiz",
+                "İmza dəstini yenilə",
+            ],
+            [
+                "heç bir tapıntı yoxdur",
+                "xəbərdarlıq səviyyəli tapıntılar var, kritik yoxdur",
+                "ən azı bir kritik tapıntı var — defolt olaraq bloklanır",
+            ],
+            ["seçimlik", "xarici imza qatı — bax --update-rules"],
         ),
     };
 
     format!(
         "aurguard {ver} — {about}\n\
          \n{usage}: aurguard [OPTIONS] [COMMAND]\n\
-         \n{commands}:\n\
+         \n{commands_h}:\n\
          \x20 -S, --sync <PKG>...   {c0}\n\
          \x20 -I, --info <PKG>...   {c1}\n\
          \x20 -Q, --query           {c2}\n\
          \x20     --file <PATH>     {c3}\n\
          \x20     --setup           {c4}\n\
-         \n{options}:\n\
+         \x20     --update-rules    {c5}\n\
+         \x20     <PKG>...          (= -I; suggests matches if not found exactly)\n\
+         \n{options_h}:\n\
          \x20     --lang <CODE>     {o0}\n\
          \x20     --no-color        {o1}\n\
          \x20     --json            {o2}\n\
@@ -1113,14 +1253,40 @@ pub fn help_text(lang: Lang) -> String {
          \x20     --fail-on <SEV>   {o4}\n\
          \x20     --max             {o5}\n\
          \x20 -v, --verbose         {o6}\n\
-         \x20 -h, --help            {o7}\n\
-         \x20 -V, --version         {o8}\n",
+         \x20     --no-decode       {o7}\n\
+         \x20     --no-normalize    {o8}\n\
+         \x20     --no-ioc          {o9}\n\
+         \x20     --no-taint        {o10}\n\
+         \x20     --no-delta        {o11}\n\
+         \x20     --vt              {o12}\n\
+         \x20 -h, --help            {o13}\n\
+         \x20 -V, --version         {o14}\n\
+         \n{examples_h}:\n\
+         \x20 # {ex0}\n\
+         \x20 aurguard -S yay\n\
+         \x20 # {ex1}\n\
+         \x20 aurguard -I some-package\n\
+         \x20 # {ex2}\n\
+         \x20 aurguard --file ./PKGBUILD --json\n\
+         \x20 # {ex3}\n\
+         \x20 aurguard -I yay --json --no-color\n\
+         \x20 # {ex4}\n\
+         \x20 aurguard --update-rules\n\
+         \n{exit_h}:\n\
+         \x20 0    CLEAN     — {exit0}\n\
+         \x20 10   RISKY     — {exit1}\n\
+         \x20 20   CRITICAL  — {exit2}\n\
+         \n{files_h}:\n\
+         \x20 ~/.config/aurguard/config.toml    ({files0})\n\
+         \x20 ~/.config/aurguard/rules.d/*.toml  ({files1})\n\
+         \n https://github.com/lunanoir21/aurguard-project\n",
         ver = env!("CARGO_PKG_VERSION"),
         c0 = c[0],
         c1 = c[1],
         c2 = c[2],
         c3 = c[3],
         c4 = c[4],
+        c5 = c[5],
         o0 = o[0],
         o1 = o[1],
         o2 = o[2],
@@ -1130,6 +1296,22 @@ pub fn help_text(lang: Lang) -> String {
         o6 = o[6],
         o7 = o[7],
         o8 = o[8],
+        o9 = o[9],
+        o10 = o[10],
+        o11 = o[11],
+        o12 = o[12],
+        o13 = o[13],
+        o14 = o[14],
+        ex0 = ex[0],
+        ex1 = ex[1],
+        ex2 = ex[2],
+        ex3 = ex[3],
+        ex4 = ex[4],
+        exit0 = exit_d[0],
+        exit1 = exit_d[1],
+        exit2 = exit_d[2],
+        files0 = files_d[0],
+        files1 = files_d[1],
     )
 }
 

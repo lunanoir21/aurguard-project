@@ -42,6 +42,13 @@ pub struct Config {
     pub signatures: Signatures,
     /// User-defined indicators of compromise.
     pub ioc: Ioc,
+    /// `[ruleset]` — where `--update-rules` fetches from.
+    pub ruleset: RulesetSettings,
+    /// The loaded `rules.d/*.toml` overlay (T2.1). Not part of `config.toml`
+    /// itself — read separately from the fixed `rules.d/` directory next to
+    /// it, so it is excluded from (de)serialization.
+    #[serde(skip)]
+    pub overlay: crate::ruleset::Ruleset,
 }
 
 /// `[signatures]` section: site-local rules layered on top of the built-in
@@ -147,6 +154,29 @@ impl VirusTotal {
     }
 }
 
+/// `[ruleset]` section: where `aurguard --update-rules` fetches the external,
+/// updatable signature overlay from (T2.1 — see `docs/SECURITY-ROADMAP.md`).
+///
+/// ```toml
+/// [ruleset]
+/// rules_url = "https://raw.githubusercontent.com/you/your-rules/main/rules.toml"
+/// ```
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct RulesetSettings {
+    /// HTTPS URL `--update-rules` fetches a versioned `rules.d/*.toml` file
+    /// from. Defaults to the project's own community ruleset.
+    pub rules_url: String,
+}
+
+impl Default for RulesetSettings {
+    fn default() -> Self {
+        RulesetSettings {
+            rules_url: crate::ruleset::DEFAULT_RULES_URL.to_string(),
+        }
+    }
+}
+
 /// `[ui]` section.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
@@ -233,12 +263,18 @@ impl Config {
     }
 
     /// Load configuration from the default path, returning defaults if the file
-    /// does not exist. Returns an error only on a malformed file.
+    /// does not exist. Returns an error only on a malformed file. Also loads
+    /// the `rules.d/` overlay (T2.1) from its fixed location next to the
+    /// config file, independent of `path`.
     pub fn load() -> Result<Self> {
-        match Self::default_path() {
-            Some(p) => Self::load_from(&p),
-            None => Ok(Self::default()),
+        let mut cfg = match Self::default_path() {
+            Some(p) => Self::load_from(&p)?,
+            None => Self::default(),
+        };
+        if let Some(dir) = crate::ruleset::Ruleset::default_dir() {
+            cfg.overlay = crate::ruleset::Ruleset::load_dir(&dir);
         }
+        Ok(cfg)
     }
 
     /// Load configuration from a specific path (defaults if absent).

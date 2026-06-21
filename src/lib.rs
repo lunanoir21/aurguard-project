@@ -10,7 +10,8 @@
 //! - [`decode`] — decode-and-rescan of base64/hex blobs + entropy.
 //! - [`ioc`] — known-bad indicator blocklist + crypto-wallet detection.
 //! - [`normalize`] — constant-fold anti-evasion (unquote/IFS/escape folding).
-//! - [`srcscan`] — committed prebuilt-binary detection over the source tree.
+//! - [`ruleset`] — external/updatable `rules.d/` signature overlay (`--update-rules`).
+//! - [`srcscan`] — committed-binary detection + build-helper text scan over the source tree.
 //! - [`taint`] — dataflow taint from untrusted input to execution sinks.
 //! - [`vt`] — VirusTotal hash hints (offline) + optional API lookups.
 //! - [`report`] — findings, severities, and the aggregated [`report::Report`].
@@ -31,6 +32,7 @@ pub mod normalize;
 pub mod pkgbuild;
 pub mod report;
 pub mod rules;
+pub mod ruleset;
 pub mod srcscan;
 pub mod taint;
 pub mod ui;

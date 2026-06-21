@@ -55,7 +55,23 @@ impl SigRule {
 /// carries the salient match as `arg`; `pkgbuild::localize` rewrites it for
 /// non-English interfaces from the i18n catalog using that same `arg`.
 pub fn scan_line(lower: &str, lineno: usize, findings: &mut Vec<Finding>) {
+    scan_line_except(lower, lineno, &std::collections::HashSet::new(), findings)
+}
+
+/// Like [`scan_line`], but skips any built-in rule whose `code` is in `skip`.
+/// Used by [`crate::pkgbuild`] when a `rules.d/` ruleset (see
+/// [`crate::ruleset`]) declares a rule with the same `code` as a built-in one
+/// — the override wins and the built-in match is suppressed for that code.
+pub fn scan_line_except(
+    lower: &str,
+    lineno: usize,
+    skip: &std::collections::HashSet<String>,
+    findings: &mut Vec<Finding>,
+) {
     for rule in RULES {
+        if skip.contains(rule.code) {
+            continue;
+        }
         if let Some(token) = rule.evaluate(lower) {
             let message = i18n::fill(rule.msg, Some(&token));
             findings.push(Finding::at(rule.severity, rule.code, message, lineno).with_arg(token));

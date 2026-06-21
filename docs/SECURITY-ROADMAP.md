@@ -1,5 +1,13 @@
 # aurguard — Security Roadmap (Tier 1 + Tier 2)
 
+> **Status (v1.5.0): fully implemented.** Every pass below shipped:
+> `decode.rs` (T1.1/T1.4), `normalize.rs` (T1.2), `taint.rs` (T1.3),
+> `ruleset.rs` (T2.1, `aurguard --update-rules`), `ioc.rs` (T2.2), delta +
+> maintainer tracking in `diff.rs`/`installer.rs` (T2.3), and the
+> committed-binary **and** source-tree text scan in `srcscan.rs` (T2.4). This
+> document is kept as the living spec for the detection model; treat its
+> "implementation order" as historical, not a to-do list.
+
 This document is the **spec and base ruleset** for the next wave of detection
 work. It is written before implementation so the finding codes, severities, and
 matching semantics are fixed up front and stay consistent across modules.
